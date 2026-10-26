@@ -22,9 +22,13 @@ struct FileButlerApp: App {
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1280, height: 780)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("授予完全磁盘访问权限…") { app.showFDA = true }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("新建标签页") { app.newTab() }.keyboardShortcut("t")
                 Button("新建文件夹") { app.newFolder() }.keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("用所选项目新建文件夹") { app.newFolderWithItems(app.activeTab.selectedURLs) }.keyboardShortcut("n", modifiers: [.command, .control])
                 Divider()
                 Button("关闭标签页") { app.closeTab() }.keyboardShortcut("w")
             }
@@ -35,7 +39,8 @@ struct FileButlerApp: App {
                 Button("打开所选") { app.activeController.openSelection() }.keyboardShortcut(.downArrow)
                 Button("快速查看") { app.activeController.quickLook() }.keyboardShortcut("y")
                 Button("重命名…") { app.activeController.renameSelection() }
-                Button("制作副本") { app.duplicate(app.activeTab.selectedURLs) }
+                Button("复制") { app.duplicate(app.activeTab.selectedURLs) }
+                Button("制作替身") { app.makeAlias(app.activeTab.selectedURLs) }.keyboardShortcut("a", modifiers: [.command, .control])
                 Button("压缩") { app.zip(app.activeTab.selectedURLs) }
                 Button("移到废纸篓") { app.trash(app.activeTab.selectedURLs) }
                 Divider()

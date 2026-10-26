@@ -159,7 +159,7 @@ func freeSpace(_ u: URL) -> Int64? {
 }
 
 struct FBError: LocalizedError { let msg: String; init(_ m: String) { msg = m }; var errorDescription: String? { msg } }
-enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL, URL)]), created([URL]) }
+indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL, URL)]), created([URL]), group([UndoOp]) }
 
 // MARK: - Pure file operations (also used by --selftest)
 enum FileOps {
@@ -203,6 +203,34 @@ enum FileOps {
         try fm.createDirectory(at: u, withIntermediateDirectories: false)
         return u
     }
+    /// 访达的「用所选项目新建文件夹」：在第一个项目所在的文件夹里新建「新建文件夹包含项目」，把所选项目移进去。
+    static func newFolderWithItems(_ urls: [URL]) throws -> (folder: URL, moved: [(URL, URL)]) {
+        guard let first = urls.first else { throw FBError("没有选中项目。") }
+        let dir = first.deletingLastPathComponent()
+        var name = "新建文件夹包含项目", i = 2
+        while fm.fileExists(atPath: dir.appendingPathComponent(name).path) { name = "新建文件夹包含项目 \(i)"; i += 1 }
+        let folder = dir.appendingPathComponent(name)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+        var moved: [(URL, URL)] = []
+        do {
+            for u in urls { let dst = folder.appendingPathComponent(u.lastPathComponent); try fm.moveItem(at: u, to: dst); moved.append((u, dst)) }
+        } catch {
+            for (a, b) in moved.reversed() { try? fm.moveItem(at: b, to: a) }
+            try? fm.removeItem(at: folder)
+            throw error
+        }
+        return (folder, moved)
+    }
+    /// 访达的「制作替身」：写入 alias（书签）文件，命名为「X 的替身」。
+    static func makeAlias(_ u: URL) throws -> URL {
+        let data = try u.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
+        let dir = u.deletingLastPathComponent()
+        var name = "\(u.lastPathComponent) 的替身", i = 2
+        while fm.fileExists(atPath: dir.appendingPathComponent(name).path) { name = "\(u.lastPathComponent) 的替身 \(i)"; i += 1 }
+        let dst = dir.appendingPathComponent(name)
+        try URL.writeBookmarkData(data, to: dst)
+        return dst
+    }
     static func rename(_ u: URL, to name: String) throws -> URL {
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { throw FBError("名称不能为空。") }
@@ -218,6 +246,10 @@ enum FileOps {
         case .rename(let a, let b): try fm.moveItem(at: b, to: a)
         case .moved(let pairs): for (a, b) in pairs.reversed() { try fm.moveItem(at: b, to: a) }
         case .trashed(let pairs): for (a, b) in pairs { try fm.moveItem(at: b, to: a) }
+        case .group(let ops):
+            var out: [URL] = []
+            for op in ops.reversed() { out += try undo(op) }
+            return out
         case .created(let urls):
             var out: [URL] = []
             for u in urls { var r: NSURL?; try fm.trashItem(at: u, resultingItemURL: &r); if let r = r as URL? { out.append(r) } }
@@ -492,6 +524,9 @@ final class AppState: ObservableObject {
     @Published var editingPane: Int?
     @Published var busyText: String?
     @Published var searchFocus = 0
+    @Published var showFDA = false
+    @Published var inlineRename: URL?
+    @Published var tagPopoverTick = 0
     let responders = [WeakView(), WeakView()]
     var controllers: [PaneController] = []
     var undoStack: [UndoOp] = []
@@ -665,12 +700,42 @@ final class AppState: ObservableObject {
         reloadVisible()
         if !r.errs.isEmpty { showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
     }
+    /// 访达行为：在当前显示的文件夹（分栏视图里是最右侧的文件夹）新建「未命名文件夹」，选中并直接进入就地重命名。
     func newFolder() {
+        let tab = activeTab
+        let dir = (tab.viewMode == .column && !tab.isGlobalSearch ? tab.columnChain.last : nil) ?? tab.path
         do {
-            let u = try FileOps.newFolder(in: activeTab.path)
-            undoStack.append(.created([u])); activeTab.selection = [u.standardizedFileURL]; activeTab.reload()
-            renameReq = RenameReq(url: u)
+            let u = try FileOps.newFolder(in: dir).standardizedFileURL
+            undoStack.append(.created([u]))
+            if tab.searchActive { tab.clearSearch() }
+            tab.selection = [u]; tab.anchor = u
+            tab.reload()
+            beginRename(u)
         } catch { showError("无法新建文件夹", error.localizedDescription, fda: isPermissionError(error)) }
+    }
+    func newFolderWithItems(_ urls: [URL]) {
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        let dir = urls[0].deletingLastPathComponent().standardizedFileURL.path
+        guard urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL.path == dir }) else { showError("无法新建文件夹", "所选项目需要在同一个文件夹里。"); return }
+        do {
+            let r = try FileOps.newFolderWithItems(urls)
+            undoStack.append(.group([.created([r.folder]), .moved(r.moved)]))
+            let u = r.folder.standardizedFileURL
+            activeTab.selection = [u]; activeTab.anchor = u
+            reloadVisible(); beginRename(u)
+        } catch { showError("无法新建文件夹", error.localizedDescription, fda: isPermissionError(error)) }
+    }
+    func makeAlias(_ urls: [URL]) {
+        var made: [URL] = [], errs: [String] = []
+        for u in urls { do { made.append(try FileOps.makeAlias(u)) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") } }
+        if !made.isEmpty { undoStack.append(.created(made)); activeTab.selection = Set(made.map { $0.standardizedFileURL }) }
+        reloadVisible()
+        if !errs.isEmpty { showError("无法制作替身", errs.joined(separator: "\n")) }
+    }
+    /// 就地重命名（画廊视图没有可编辑的名称，退回到重命名窗口）
+    func beginRename(_ u: URL) {
+        if activeTab.viewMode == .gallery && !activeTab.isGlobalSearch { renameReq = RenameReq(url: u) }
+        else { inlineRename = u.standardizedFileURL }
     }
     func rename(_ u: URL, to name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines) != u.lastPathComponent else { return }

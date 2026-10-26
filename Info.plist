@@ -9,8 +9,8 @@
 <key>CFBundleExecutable</key><string>FileButler</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.1</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.4</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -19,4 +19,6 @@
 <key>NSDownloadsFolderUsageDescription</key><string>用于浏览和管理下载文件夹中的文件。</string>
 <key>NSRemovableVolumesUsageDescription</key><string>用于浏览外接磁盘中的文件。</string>
 <key>NSNetworkVolumesUsageDescription</key><string>用于浏览网络磁盘中的文件。</string>
+<key>NSFileProviderDomainUsageDescription</key><string>用于浏览和管理 iCloud 云盘等云端文件夹中的文件。</string>
+<key>NSAppleEventsUsageDescription</key><string>用于在访达中显示文件。</string>
 </dict></plist>

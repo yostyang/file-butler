@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct ContentView: View {
     @EnvironmentObject var app: AppState
@@ -19,13 +20,19 @@ struct ContentView: View {
             .toolbar { toolbar }
         }
         .navigationTitle(app.activeTab.title)
+        .sheet(isPresented: $app.showFDA) { FDASheet() }
         .sheet(item: $app.renameReq, onDismiss: { app.focusActiveTable() }) { r in RenameSheet(url: r.url).environmentObject(app) }
         .sheet(item: $app.sizeReq, onDismiss: { app.focusActiveTable() }) { r in SizeAnalysisView(rootURL: r.url).environmentObject(app) }
         .alert(app.alert?.title ?? "", isPresented: Binding(get: { app.alert != nil }, set: { if !$0 { app.alert = nil } })) {
             if app.alert?.fda == true { Button("打开完全磁盘访问权限设置") { NSWorkspace.shared.open(fdaURL) } }
             Button("好", role: .cancel) {}
         } message: { Text(app.alert?.message ?? "") }
-        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { app.focusActiveTable() } }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { app.focusActiveTable() }
+            if !hasFullDiskAccess() && !UserDefaults.standard.bool(forKey: "fdaPromptDismissed") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { app.showFDA = true }
+            }
+        }
     }
 
     @ToolbarContentBuilder var toolbar: some ToolbarContent {
@@ -83,11 +90,13 @@ struct ShareButton: View {
     }
 }
 struct TagButton: View {
+    @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     @State var show = false
     var body: some View {
         Button { show.toggle() } label: { Label("标签", systemImage: "tag") }.help("设置标签")
             .popover(isPresented: $show, arrowEdge: .bottom) { TagPopover(tab: tab) }
+            .onChange(of: app.tagPopoverTick) { _ in show = true }
     }
 }
 struct MoreMenu: View {
@@ -96,7 +105,8 @@ struct MoreMenu: View {
     let pane: Int
     var body: some View {
         Menu {
-            ItemActions(app: app, tab: tab, pane: pane, urls: tab.selectedURLs)
+            Button("新建文件夹") { app.active = pane; app.newFolder() }
+            if !tab.selectedURLs.isEmpty { Divider(); SpecMenu(entries: contextSpec(app: app, tab: tab, pane: pane, urls: tab.selectedURLs), app: app) }
             Divider()
             Button(app.showPreview ? "隐藏预览" : "显示预览") { app.showPreview.toggle() }
             Button(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件") { app.showHidden.toggle() }
@@ -179,7 +189,7 @@ struct SidebarView: View {
         let isCur = app.activeTab.path.path == u.standardizedFileURL.path
         return Button { app.go(u) } label: {
             HStack(spacing: 8) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: u.path)).resizable().frame(width: 16, height: 16)
+                Image(nsImage: safeFolderIcon(u)).resizable().frame(width: 16, height: 16)
                 Text(name ?? FileManager.default.displayName(atPath: u.path)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
             }.contentShape(Rectangle())
@@ -232,7 +242,7 @@ struct TabChip: View {
     @State var hover = false
     var body: some View {
         HStack(spacing: 5) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: tab.path.path)).resizable().frame(width: 14, height: 14)
+            Image(nsImage: safeFolderIcon(tab.path)).resizable().frame(width: 14, height: 14)
             Text(tab.title).lineLimit(1).font(.system(size: 12, weight: selected ? .semibold : .regular))
             if canClose && (hover || selected) {
                 Button(action: close) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }.buttonStyle(.borderless).help("关闭标签页 ⌘W")
@@ -257,7 +267,7 @@ struct TabContent: View {
             Divider()
             ZStack {
                 switch effectiveMode {
-                case .list: FileTable(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection)
+                case .list: FileTable(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection, renaming: app.inlineRename)
                 case .icon: IconGrid(tab: tab, index: index)
                 case .column: ColumnBrowser(tab: tab, index: index)
                 case .gallery: GalleryView(tab: tab, index: index)
@@ -339,7 +349,7 @@ struct PathBar: View {
                                 if i > 0 { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary) }
                                 Button { app.active = index; tab.navigate(u) } label: {
                                     HStack(spacing: 4) {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: u.path)).resizable().frame(width: 14, height: 14)
+                                        Image(nsImage: safeFolderIcon(u)).resizable().frame(width: 14, height: 14)
                                         Text(u.path == "/" ? "Macintosh HD" : FileManager.default.displayName(atPath: u.path)).font(.system(size: 12)).lineLimit(1)
                                     }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
                                 }.buttonStyle(.plain).id(i)
@@ -402,4 +412,58 @@ struct RenameSheet: View {
         }.padding(20)
     }
     func commit() { let u = url, n = name; dismiss(); DispatchQueue.main.async { app.rename(u, to: n) } }
+}
+
+/// 侧边栏、标签页、路径栏用的图标：普通文件夹一律用通用文件夹图标，不去读取受保护文件夹里的内容
+/// （读取自定义图标会触发「桌面 / 文稿 / 下载」等隐私授权弹窗）。
+let genericFolderIcon = NSWorkspace.shared.icon(for: .folder)
+let homeIcon: NSImage = NSImage(systemSymbolName: "house", accessibilityDescription: nil) ?? genericFolderIcon
+func safeFolderIcon(_ u: URL) -> NSImage {
+    let p = u.standardizedFileURL.path
+    if p == "/" || p.hasPrefix("/Volumes/") && u.deletingLastPathComponent().path == "/Volumes" { return ThumbCache.icon(u) }
+    if p == "/Applications" { return ThumbCache.icon(u) }
+    return genericFolderIcon
+}
+
+/// 是否已授予「完全磁盘访问权限」：只读检查，不会触发任何弹窗。
+func hasFullDiskAccess() -> Bool {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    for p in [home + "/Library/Application Support/com.apple.TCC/TCC.db", home + "/Library/Safari/Bookmarks.plist", "/Library/Application Support/com.apple.TCC/TCC.db"] {
+        let fd = open(p, O_RDONLY)
+        if fd >= 0 { close(fd); return true }
+    }
+    return false
+}
+
+struct FDASheet: View {
+    @Environment(\.dismiss) var dismiss
+    @State var granted = hasFullDiskAccess()
+    let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: granted ? "checkmark.shield.fill" : "lock.shield").font(.system(size: 34)).foregroundStyle(granted ? AnyShapeStyle(Color.green) : AnyShapeStyle(accentGrad))
+                Text(granted ? "已获得完全磁盘访问权限" : "授予一次，以后不再弹窗").font(.title3.bold())
+            }
+            if granted {
+                Text("文件管家现在可以直接访问桌面、文稿、下载、iCloud 云盘和外接磁盘，不会再逐个文件夹申请权限。").foregroundStyle(.secondary)
+            } else {
+                Text("macOS 会对「桌面」「文稿」「下载」、iCloud 云盘、外接磁盘等位置逐个弹窗申请权限。作为文件管理器，最省事的办法是一次性授予「完全磁盘访问权限」：").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("1. 点下面的按钮，打开「隐私与安全性 › 完全磁盘访问权限」")
+                    Text("2. 打开「文件管家」的开关（列表里没有就点 ＋ 添加 /Applications/文件管家.app）")
+                    Text("3. 按提示退出并重新打开文件管家")
+                }.font(.callout)
+                Text("授权会一直有效，以后更新文件管家也不用重新授权。").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                if !granted { Button("以后再说") { UserDefaults.standard.set(true, forKey: "fdaPromptDismissed"); dismiss() } }
+                Spacer()
+                if granted { Button("好") { dismiss() }.keyboardShortcut(.defaultAction) }
+                else { Button("打开系统设置") { NSWorkspace.shared.open(fdaURL) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(accentA) }
+            }
+        }
+        .padding(22).frame(width: 470)
+        .onReceive(timer) { _ in if !granted { granted = hasFullDiskAccess() } }
+    }
 }

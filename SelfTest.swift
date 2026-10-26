@@ -106,6 +106,24 @@ enum SelfTest {
             check("跨文件夹压缩会被拒绝", (try? FileOps.zip([f1, b.appendingPathComponent("file1.txt")])) == nil)
         } catch { check("压缩", false, error.localizedDescription) }
 
+        // 访达同款：新建文件夹命名序列、用所选项目新建文件夹、制作替身
+        do {
+            let n1 = try FileOps.newFolder(in: b), n2 = try FileOps.newFolder(in: b), n3 = try FileOps.newFolder(in: b)
+            check("新建文件夹命名序列（未命名文件夹 / 2 / 3）", [n1, n2, n3].map { $0.lastPathComponent } == ["未命名文件夹", "未命名文件夹 2", "未命名文件夹 3"])
+            let x = b.appendingPathComponent("x.txt"), y = b.appendingPathComponent("y.txt")
+            try "x".write(to: x, atomically: true, encoding: .utf8); try "y".write(to: y, atomically: true, encoding: .utf8)
+            let r = try FileOps.newFolderWithItems([x, y])
+            check("用所选项目新建文件夹", r.folder.lastPathComponent == "新建文件夹包含项目" && exists(r.folder.appendingPathComponent("x.txt")) && exists(r.folder.appendingPathComponent("y.txt")) && !exists(x))
+            trashLeftovers += try FileOps.undo(.group([.created([r.folder]), .moved(r.moved)]))
+            check("撤销用所选项目新建文件夹", exists(x) && exists(y) && !exists(r.folder))
+            let al = try FileOps.makeAlias(x)
+            var stale = false
+            let target = try? URL(resolvingAliasFileAt: al, options: [])
+            _ = stale; stale = false
+            check("制作替身（X 的替身，可解析回原文件）", al.lastPathComponent == "x.txt 的替身" && target?.standardizedFileURL.path == x.standardizedFileURL.path, target?.path ?? "无法解析")
+            check("就地重命名选中范围（不含扩展名）", baseNameRange("报告.final.pdf", isDir: false).length == ("报告.final" as NSString).length && baseNameRange("未命名文件夹", isDir: true).length == 6)
+        } catch { check("访达同款新建文件夹", false, error.localizedDescription) }
+
         // grouping and filtering logic
         let items = ((try? fm.contentsOfDirectory(at: a, includingPropertiesForKeys: listKeys)) ?? []).map(makeItem)
         let gk = groupItems(items, by: .kind)

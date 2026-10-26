@@ -97,46 +97,6 @@ struct TagDotsView: View {
     }
 }
 
-// MARK: shared SwiftUI actions (••• menu and context menus of icon / column / gallery views)
-struct ItemActions: View {
-    let app: AppState, tab: TabModel, pane: Int, urls: [URL]
-    var body: some View {
-        Button("新建文件夹") { app.active = pane; app.newFolder() }
-        if urls.isEmpty {
-            Button("粘贴") { app.paste(into: tab.path) }
-        } else {
-            Divider()
-            Button("打开") { app.openURLs(urls, in: tab) }
-            Menu("打开方式") {
-                ForEach(NSWorkspace.shared.urlsForApplications(toOpen: urls[0]).prefix(20), id: \.self) { a in
-                    Button(FileManager.default.displayName(atPath: a.path)) {
-                        NSWorkspace.shared.open(urls, withApplicationAt: a, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
-                    }
-                }
-            }
-            if urls.count == 1 { Button("重命名…") { app.renameReq = RenameReq(url: urls[0]) } }
-            Button("复制（制作副本）") { app.duplicate(urls) }
-            Button("拷贝") { app.copyToClipboard(urls, cut: false) }
-            Button("剪切") { app.copyToClipboard(urls, cut: true) }
-            Button(urls.count == 1 ? "压缩「\(urls[0].lastPathComponent)」" : "压缩 \(urls.count) 项") { app.zip(urls) }
-            Button("拷贝路径") { copyPaths(urls) }
-            Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-            Button("显示简介") { app.active = pane; app.showPreview = true }
-            Button("快速查看") { app.active = pane; app.controllers[pane].quickLook(urls) }
-            Menu("标签") {
-                ForEach(app.allTags, id: \.self) { t in
-                    Button((urls.allSatisfy { FileOps.readTags($0).contains(t) } ? "✓ " : "　") + t) { app.toggleTag(t, urls) }
-                }
-            }
-            if app.dual {
-                Button("拷贝到另一栏") { app.transfer(urls, to: app.panes[1 - pane].tab.path, mode: .copy) }
-                Button("移动到另一栏") { app.transfer(urls, to: app.panes[1 - pane].tab.path, mode: .move) }
-            }
-            Divider()
-            Button("移到废纸篓") { app.trash(urls) }
-        }
-    }
-}
 func contextURLs(_ tab: TabModel, _ it: FileItem) -> [URL] { tab.selection.contains(it.url) ? tab.selectedURLs : [it.url] }
 
 // MARK: icon view
@@ -173,7 +133,7 @@ struct IconGrid: View {
         .background(KeyCatcher(app: app, pane: index))
         .contentShape(Rectangle())
         .onTapGesture { tab.selection = []; app.focusPane(index) }
-        .contextMenu { ItemActions(app: app, tab: tab, pane: index, urls: []) }
+        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
     }
     func cell(_ it: FileItem, size: CGFloat, order: [URL]) -> some View {
@@ -183,7 +143,8 @@ struct IconGrid: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(sel ? Color.primary.opacity(0.12) : .clear))
             HStack(spacing: 3) {
                 if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
-                Text(it.name).font(.system(size: 11)).lineLimit(2).multilineTextAlignment(.center).truncationMode(.middle)
+                if app.inlineRename == it.url { InlineNameField(url: it.url, isDir: it.isDir, app: app).frame(width: size + 30) }
+                else { Text(it.name).font(.system(size: 11)).lineLimit(2).multilineTextAlignment(.center).truncationMode(.middle) }
             }
             .padding(.horizontal, 4).padding(.vertical, 1)
             .background(RoundedRectangle(cornerRadius: 4).fill(sel ? accentA : .clear))
@@ -193,7 +154,7 @@ struct IconGrid: View {
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
         .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: order); app.focusPane(index) })
-        .contextMenu { ItemActions(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)) }
+        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
         .onDrag { NSItemProvider(object: it.url as NSURL) }
         .modifier(FolderDrop(app: app, item: it))
         .help(it.name)
@@ -265,7 +226,8 @@ struct ColumnBrowser: View {
                     let strong = tab.selection.contains(it.url)
                     HStack(spacing: 6) {
                         Image(nsImage: ThumbCache.listIcon(it)).resizable().frame(width: 16, height: 16)
-                        Text(it.name).lineLimit(1).truncationMode(.middle).font(.system(size: 12))
+                        if app.inlineRename == it.url { InlineNameField(url: it.url, isDir: it.isDir, app: app, fontSize: 12, center: false) }
+                        else { Text(it.name).lineLimit(1).truncationMode(.middle).font(.system(size: 12)) }
                         Spacer(minLength: 2)
                         if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
                         if it.isFolderLike { Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
@@ -277,7 +239,7 @@ struct ColumnBrowser: View {
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                     .simultaneousGesture(TapGesture().onEnded { select(it, at: i, items: items) })
-                    .contextMenu { ItemActions(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)) }
+                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
                     .onDrag { NSItemProvider(object: it.url as NSURL) }
                     .modifier(FolderDrop(app: app, item: it))
                 }
@@ -328,7 +290,7 @@ struct GalleryView: View {
                                 .contentShape(Rectangle())
                                 .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                                 .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: tab.display.map { $0.url }); app.focusPane(index) })
-                                .contextMenu { ItemActions(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)) }
+                                .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
                                 .onDrag { NSItemProvider(object: it.url as NSURL) }
                                 .modifier(FolderDrop(app: app, item: it))
                                 .help(it.name).id(it.url)

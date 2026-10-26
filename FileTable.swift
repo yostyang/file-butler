@@ -27,7 +27,7 @@ final class NameCell: NSTableCellView {
 }
 
 struct FileTable: NSViewRepresentable {
-    let tab: TabModel, app: AppState, paneIndex: Int, version: Int, selection: Set<URL>
+    let tab: TabModel, app: AppState, paneIndex: Int, version: Int, selection: Set<URL>, renaming: URL?
 
     func makeCoordinator() -> Coordinator { Coordinator(app: app, tab: tab, pane: paneIndex) }
 
@@ -68,7 +68,7 @@ struct FileTable: NSViewRepresentable {
 
     enum Row { case header(String, Int), item(FileItem) }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
         let app: AppState; var tab: TabModel; var pane: Int
         var rows: [Row] = []; var lastVersion = -1; var suppress = false
         weak var table: FBTableView?
@@ -95,6 +95,43 @@ struct FileTable: NSViewRepresentable {
                 tv.reloadData(); suppress = false
                 applySelection()
             } else if Set(selectedURLs) != tab.selection { applySelection() }
+            if app.inlineRename != nil && editingURL == nil { DispatchQueue.main.async { self.startInlineRename() } }
+        }
+
+        // MARK: 就地重命名（和访达一样：回车进入编辑，选中不含扩展名的部分；回车或点别处确认，Esc 取消）
+        var editingURL: URL?
+        var cancelled = false
+        func startInlineRename() {
+            guard let u = app.inlineRename, editingURL == nil, let tv = table,
+                  let row = rows.firstIndex(where: { if case .item(let it) = $0 { return it.url == u }; return false }) else { return }
+            let col = tv.column(withIdentifier: NSUserInterfaceItemIdentifier("name"))
+            guard col >= 0 else { return }
+            tv.scrollRowToVisible(row)
+            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? NSTableCellView, let tf = cell.textField, let it = item(row) else { return }
+            editingURL = u; cancelled = false
+            tf.isEditable = true; tf.isSelectable = true; tf.drawsBackground = true; tf.backgroundColor = .textBackgroundColor; tf.isBordered = true
+            tf.delegate = self
+            tv.window?.makeFirstResponder(tf)
+            tf.currentEditor()?.selectedRange = baseNameRange(it.name, isDir: it.isDir)
+        }
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+            if sel == #selector(NSResponder.cancelOperation(_:)), let tf = control as? NSTextField, editingURL != nil {
+                cancelled = true; tf.abortEditing(); finishInline(tf, commit: false); return true
+            }
+            return false
+        }
+        func controlTextDidEndEditing(_ n: Notification) {
+            guard editingURL != nil, let tf = n.object as? NSTextField else { return }
+            finishInline(tf, commit: !cancelled)
+        }
+        func finishInline(_ tf: NSTextField, commit: Bool) {
+            guard let u = editingURL else { return }
+            editingURL = nil
+            let name = tf.stringValue
+            tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false; tf.delegate = nil
+            app.inlineRename = nil
+            if commit { app.rename(u, to: name) } else { tf.stringValue = u.lastPathComponent }
+            table?.window?.makeFirstResponder(table)
         }
         func applySelection() {
             guard let tv = table else { return }
@@ -144,6 +181,7 @@ struct FileTable: NSViewRepresentable {
                 }
                 cell = c
             }
+            if editingURL != it.url, let tf = cell?.textField, tf.isEditable { tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false }
             switch id {
             case "name":
                 cell?.textField?.stringValue = it.name
@@ -209,8 +247,7 @@ struct FileTable: NSViewRepresentable {
             let r = tv.clickedRow
             if r >= 0 && item(r) != nil && !tv.selectedRowIndexes.contains(r) { tv.selectRowIndexes([r], byExtendingSelection: false) }
             let urls = r >= 0 && item(r) != nil ? selectedURLs : []
-            let rect = r >= 0 ? tv.rect(ofRow: r) : tv.visibleRect
-            ctrl.buildMenu(menu, urls: urls, anchor: tv, rect: rect)
+            ctrl.buildMenu(menu, urls: urls)
         }
     }
 }

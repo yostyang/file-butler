@@ -35,7 +35,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     func renameSelection() {
         let s = tab.selectedURLs
         guard s.count == 1 else { NSSound.beep(); return }
-        app.renameReq = RenameReq(url: s[0])
+        app.beginRename(s[0])
     }
     func moveSelection(_ delta: Int, extend: Bool) {
         let order = visualOrder()
@@ -114,76 +114,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     }
 
     // MARK: AppKit context menu (list view)
-    func buildMenu(_ menu: NSMenu, urls: [URL], anchor: NSView?, rect: NSRect) {
-        menu.removeAllItems()
-        let app = self.app, tab = self.tab, pane = self.pane
-        func add(_ t: String, _ sym: String?, _ b: @escaping () -> Void) {
-            let i = BlockMenuItem(t, b)
-            if let s = sym { i.image = NSImage(systemSymbolName: s, accessibilityDescription: nil) }
-            menu.addItem(i)
-        }
-        if urls.isEmpty {
-            add("新建文件夹", "folder.badge.plus") { app.active = pane; app.newFolder() }
-            add("粘贴", "doc.on.clipboard") { app.paste(into: tab.path) }
-            menu.addItem(.separator())
-            add("在访达中显示", "magnifyingglass") { NSWorkspace.shared.activateFileViewerSelecting([tab.path]) }
-            add("拷贝路径", "link") { copyPaths([tab.path]) }
-            add("加入书签", "bookmark") { app.addBookmark(tab.path) }
-            add("空间分析", "chart.pie") { app.sizeReq = SizeReq(url: tab.path) }
-            return
-        }
-        add("打开", "arrow.up.forward.app") { app.openURLs(urls, in: tab) }
-        let sub = NSMenu()
-        for appURL in NSWorkspace.shared.urlsForApplications(toOpen: urls[0]).prefix(20) {
-            let it = BlockMenuItem(FileManager.default.displayName(atPath: appURL.path)) {
-                NSWorkspace.shared.open(urls, withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, e in
-                    if let e = e { DispatchQueue.main.async { app.showError("无法打开", e.localizedDescription) } }
-                }
-            }
-            let ic = NSWorkspace.shared.icon(forFile: appURL.path); ic.size = NSSize(width: 16, height: 16); it.image = ic
-            sub.addItem(it)
-        }
-        if sub.items.isEmpty { sub.addItem(NSMenuItem(title: "没有可用的应用", action: nil, keyEquivalent: "")) }
-        let om = NSMenuItem(title: "打开方式", action: nil, keyEquivalent: ""); om.submenu = sub
-        om.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
-        menu.addItem(om)
-        add("快速查看", "eye") { self.quickLook(urls) }
-        add("共享…", "square.and.arrow.up") {
-            guard let v = anchor else { return }
-            NSSharingServicePicker(items: urls).show(relativeTo: rect, of: v, preferredEdge: .maxY)
-        }
-        add("在访达中显示", "magnifyingglass") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-        add("拷贝路径", "link") { copyPaths(urls) }
-        menu.addItem(.separator())
-        if urls.count == 1 { add("重命名…", "pencil") { app.renameReq = RenameReq(url: urls[0]) } }
-        add("拷贝", "doc.on.doc") { app.copyToClipboard(urls, cut: false) }
-        add("剪切", "scissors") { app.copyToClipboard(urls, cut: true) }
-        add("复制（制作副本）", "plus.square.on.square") { app.duplicate(urls) }
-        add(urls.count == 1 ? "压缩「\(urls[0].lastPathComponent)」" : "压缩 \(urls.count) 项", "archivebox") { app.zip(urls) }
-        if app.dual {
-            add("拷贝到另一栏", "arrow.right.doc.on.clipboard") { app.transfer(urls, to: app.panes[1 - pane].tab.path, mode: .copy) }
-            add("移动到另一栏", "arrow.right.square") { app.transfer(urls, to: app.panes[1 - pane].tab.path, mode: .move) }
-        }
-        menu.addItem(.separator())
-        let tagMenu = NSMenu()
-        for t in app.allTags {
-            let have = urls.allSatisfy { FileOps.readTags($0).contains(t) }
-            let it = BlockMenuItem(t) { app.toggleTag(t, urls) }
-            it.state = have ? .on : .off
-            it.image = dotImage(tagColor(t))
-            tagMenu.addItem(it)
-        }
-        let tm = NSMenuItem(title: "标签", action: nil, keyEquivalent: ""); tm.submenu = tagMenu
-        tm.image = NSImage(systemSymbolName: "tag", accessibilityDescription: nil)
-        menu.addItem(tm)
-        add("显示简介", "info.circle") { app.active = pane; app.showPreview = true }
-        if urls.count == 1, makeItem(urls[0]).isDir {
-            add("加入书签", "bookmark") { app.addBookmark(urls[0]) }
-            add("空间分析", "chart.pie") { app.sizeReq = SizeReq(url: urls[0]) }
-        }
-        menu.addItem(.separator())
-        add("移到废纸篓", "trash") { app.trash(urls) }
-    }
+    func buildMenu(_ menu: NSMenu, urls: [URL]) { fillMenu(menu, contextSpec(app: app, tab: tab, pane: pane, urls: urls), app: app) }
 }
 
 func dotImage(_ c: NSColor?) -> NSImage {
