@@ -85,6 +85,8 @@ struct FileTable: NSViewRepresentable {
         func sync() {
             guard let tv = table else { return }
             if lastVersion != tab.version {
+                // 正在就地重命名时不要刷新表格（reloadData 会结束编辑），改完名再刷新
+                if editingURL != nil { return }
                 lastVersion = tab.version
                 if tab.groupKey == .none || tab.isGlobalSearch { rows = tab.display.map { .item($0) } }
                 else { rows = tab.groups.flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
@@ -102,12 +104,14 @@ struct FileTable: NSViewRepresentable {
         var editingURL: URL?
         var cancelled = false
         func startInlineRename() {
+            if TestEnv.debug { print("DEBUG startInline u=\(String(describing: app.inlineRename?.path)) editing=\(String(describing: editingURL)) table=\(table != nil) rows=\(rows.compactMap { if case .item(let it) = $0 { return it.url.path } else { return nil } }.prefix(3))") }
             guard let u = app.inlineRename, editingURL == nil, let tv = table,
-                  let row = rows.firstIndex(where: { if case .item(let it) = $0 { return it.url == u }; return false }) else { return }
+                  let row = rows.firstIndex(where: { if case .item(let it) = $0 { return samePath(it.url, u) }; return false }) else { return }
             let col = tv.column(withIdentifier: NSUserInterfaceItemIdentifier("name"))
             guard col >= 0 else { return }
             tv.scrollRowToVisible(row)
-            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? NSTableCellView, let tf = cell.textField, let it = item(row) else { return }
+            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? NSTableCellView, let tf = cell.textField, let it = item(row) else { if TestEnv.debug { print("DEBUG no cell row=\(row)") }; return }
+            if TestEnv.debug { print("DEBUG editing row=\(row) win=\(tv.window != nil)") }
             editingURL = u; cancelled = false
             tf.isEditable = true; tf.isSelectable = true; tf.drawsBackground = true; tf.backgroundColor = .textBackgroundColor; tf.isBordered = true
             tf.delegate = self
@@ -131,6 +135,7 @@ struct FileTable: NSViewRepresentable {
             tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false; tf.delegate = nil
             app.inlineRename = nil
             if commit { app.rename(u, to: name) } else { tf.stringValue = u.lastPathComponent }
+            sync()
             table?.window?.makeFirstResponder(table)
         }
         func applySelection() {
@@ -181,7 +186,7 @@ struct FileTable: NSViewRepresentable {
                 }
                 cell = c
             }
-            if editingURL != it.url, let tf = cell?.textField, tf.isEditable { tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false }
+            if !samePath(editingURL, it.url), let tf = cell?.textField, tf.isEditable { tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false }
             switch id {
             case "name":
                 cell?.textField?.stringValue = it.name

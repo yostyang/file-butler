@@ -31,6 +31,7 @@ struct ContentView: View {
         } message: { Text(app.alert?.message ?? "") }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { app.focusActiveTable() }
+            if TestEnv.active { UITestRunner.start(app: app); return }
             if !hasFullDiskAccess() && !UserDefaults.standard.bool(forKey: "fdaPromptDismissed") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { app.showFDA = true }
             }
@@ -137,7 +138,20 @@ struct SearchBox: View {
         .onAppear { text = tab.searchText }
         .onChange(of: text) { tab.setSearch($0) }
         .onChange(of: tab.searchText) { if $0 != text { text = $0 } }
-        .onChange(of: app.searchFocus) { _ in focused = true }
+        .onChange(of: app.searchFocus) { _ in
+            focused = true
+            // 工具栏里的 SwiftUI 焦点有时不生效：直接把搜索框设为第一响应者
+            DispatchQueue.main.async {
+                guard let w = app.responders[app.active].v?.window ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.toolbar != nil }) else { return }
+                func find(_ v: NSView) -> NSTextField? {
+                    if let t = v as? NSTextField, t.isEditable, t.window != nil, (t.placeholderString ?? t.placeholderAttributedString?.string) == "搜索" { return t }
+                    for s in v.subviews { if let f = find(s) { return f } }
+                    return nil
+                }
+                let roots = [w.contentView?.superview].compactMap { $0 } + (w.toolbar?.items.compactMap { $0.view } ?? [])
+                if let tf = roots.lazy.compactMap(find).first, let w = tf.window, !(w.firstResponder is NSTextView && (w.firstResponder as? NSTextView)?.delegate === tf) { w.makeFirstResponder(tf) }
+            }
+        }
         .help("搜索 ⌘F")
     }
 }
@@ -323,17 +337,95 @@ struct PermissionView: View {
     }
 }
 
+// MARK: 路径栏（与访达一致：显示选中项的完整路径；太长时压缩中间段，首尾完整）
+let rootVolumeName: String = (try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName) ?? "Macintosh HD"
+let pbFont = NSFont.systemFont(ofSize: 12)
+let pbPad: CGFloat = 26      // 图标 14 + 间距 4 + 左右内边距 8
+let pbChevron: CGFloat = 14  // 分隔箭头 + 两侧间距
+let pbMinText: CGFloat = 40
+func pbTextWidth(_ s: String) -> CGFloat { ceil((s as NSString).size(withAttributes: [.font: pbFont]).width) }
+func pathURLs(_ target: URL) -> [URL] {
+    var out = [URL(fileURLWithPath: "/")], cur = "/"
+    for c in target.standardizedFileURL.pathComponents.dropFirst() where c != "/" && !c.isEmpty {
+        cur = (cur as NSString).appendingPathComponent(c); out.append(URL(fileURLWithPath: cur))
+    }
+    return out
+}
+func pathLabel(_ u: URL) -> String { u.path == "/" ? rootVolumeName : FileManager.default.displayName(atPath: u.path) }
+func truncMiddle(_ s: String, to w: CGFloat) -> String {
+    if pbTextWidth(s) <= w { return s }
+    let ch = Array(s)
+    var k = ch.count - 1
+    while k > 1 {
+        let head = (k + 1) / 2, tail = k - head
+        let c = String(ch.prefix(head)) + "…" + String(ch.suffix(tail))
+        if pbTextWidth(c) <= w { return c }
+        k -= 1
+    }
+    return String(ch.prefix(1)) + "…"
+}
+struct PBSeg: Hashable { var url: URL; var label: String; var hidden: [URL] = [] }
+/// 纯函数布局：返回每段要显示的文字。先完整显示；放不下就把中间段压缩（每段至少 40pt）；还放不下就把中间段折叠成一个「…」菜单。
+func pathBarLayout(_ urls: [URL], width: CGFloat) -> [PBSeg] {
+    let labels = urls.map(pathLabel)
+    let ws = labels.map(pbTextWidth)
+    func overhead(_ n: Int) -> CGFloat { CGFloat(n) * pbPad + CGFloat(max(0, n - 1)) * pbChevron }
+    if ws.reduce(0, +) + overhead(urls.count) <= width || urls.count <= 1 {
+        return zip(urls, labels).map { PBSeg(url: $0, label: $1) }
+    }
+    if urls.count == 2 {
+        let avail = max(pbMinText, width - overhead(2) - ws[1])
+        return [PBSeg(url: urls[0], label: truncMiddle(labels[0], to: avail)), PBSeg(url: urls[1], label: truncMiddle(labels[1], to: max(pbMinText, width - overhead(2) - min(ws[0], avail))))]
+    }
+    let n = urls.count - 2
+    let midAvail = width - ws[0] - ws[urls.count - 1] - overhead(urls.count)
+    let mids = Array(ws[1..<(urls.count - 1)])
+    if midAvail >= CGFloat(n) * pbMinText {
+        // 水位法：找一个上限 c，使 sum(min(w, c)) <= midAvail
+        var lo = pbMinText, hi = mids.max() ?? pbMinText
+        for _ in 0..<30 { let c = (lo + hi) / 2; if mids.map({ min($0, c) }).reduce(0, +) <= midAvail { lo = c } else { hi = c } }
+        var out = [PBSeg(url: urls[0], label: labels[0])]
+        for i in 1..<(urls.count - 1) { out.append(PBSeg(url: urls[i], label: truncMiddle(labels[i], to: lo))) }
+        out.append(PBSeg(url: urls[urls.count - 1], label: labels[urls.count - 1]))
+        return out
+    }
+    // 折叠：首段 + 「…」 + 能放下的末尾若干段（最后一段始终显示）
+    let ell = pbTextWidth("…") + 8
+    var tailIdx = [urls.count - 1]
+    var used = ws[0] + ws[urls.count - 1] + overhead(2) + ell + pbChevron
+    var i = urls.count - 2
+    while i >= 1, used + ws[i] + pbPad + pbChevron <= width { used += ws[i] + pbPad + pbChevron; tailIdx.insert(i, at: 0); i -= 1 }
+    var out = [PBSeg(url: urls[0], label: labels[0])]
+    let hiddenEnd = tailIdx.first!
+    if hiddenEnd > 1 { out.append(PBSeg(url: urls[hiddenEnd - 1], label: "…", hidden: Array(urls[1..<hiddenEnd]))) }
+    // 还是太长：先压缩第一段（磁盘名），最后一段尽量完整
+    if used > width {
+        let need = used - width
+        let firstW = max(pbMinText, ws[0] - need)
+        out[0].label = truncMiddle(labels[0], to: firstW)
+        used -= ws[0] - pbTextWidth(out[0].label)
+    }
+    for j in tailIdx {
+        let lastAvail = width - (used - ws[j])
+        out.append(PBSeg(url: urls[j], label: j == urls.count - 1 ? truncMiddle(labels[j], to: max(pbMinText, lastAvail)) : labels[j]))
+    }
+    return out
+}
+func pathIcon(_ u: URL, isTarget: Bool, tab: TabModel) -> NSImage {
+    if isTarget && u.standardizedFileURL.path != tab.path.standardizedFileURL.path {
+        let it = makeItem(u); if !it.isFolderLike { return ThumbCache.listIcon(it) }
+    }
+    if u.path == FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path { return homeFolderIcon }
+    return safeFolderIcon(u)
+}
+let homeFolderIcon: NSImage = NSWorkspace.shared.icon(for: .folder)
+
 struct PathBar: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let index: Int
     @State var text = ""
     @FocusState var focused: Bool
-    var components: [URL] {
-        var list: [URL] = []; var u = tab.pathTarget
-        while true { list.insert(u, at: 0); let p = u.deletingLastPathComponent(); if p.path == u.path || list.count > 60 { break }; u = p }
-        return list
-    }
     var body: some View {
         HStack(spacing: 4) {
             if app.editingPane == index {
@@ -344,40 +436,56 @@ struct PathBar: View {
                     .onAppear { text = ""; DispatchQueue.main.async { focused = true } }
                 Button("取消") { app.editingPane = nil; app.focusActiveTable() }.buttonStyle(.borderless).font(.caption)
             } else {
-                let comps = components
-                HStack(spacing: 2) {
-                    ForEach(Array(comps.enumerated()), id: \.offset) { i, u in
-                        if i > 0 { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary).layoutPriority(3) }
-                        Button { segmentClicked(u, isLast: i == comps.count - 1) } label: {
-                            HStack(spacing: 4) {
-                                Image(nsImage: i == comps.count - 1 && u != tab.path ? ThumbCache.listIcon(makeItem(u)) : safeFolderIcon(u)).resizable().frame(width: 14, height: 14)
-                                Text(u.path == "/" ? "Macintosh HD" : FileManager.default.displayName(atPath: u.path)).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                            }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        .layoutPriority(i == 0 || i == comps.count - 1 ? 2 : 0)
-                        .help(u.path)
-                    }
+                GeometryReader { g in
+                    PathSegmentsView(tab: tab, index: index, width: g.size.width)
+                        .frame(width: g.size.width, height: g.size.height, alignment: .leading)
                 }
-                .help(tab.pathTarget.path)
-                Spacer(minLength: 0)
                 Button { app.active = index; app.editingPane = index } label: { Image(systemName: "character.cursor.ibeam") }.buttonStyle(.borderless).help("输入路径 ⌘L / ⇧⌘G")
             }
         }
         .padding(.horizontal, 8).frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
     }
+}
+struct PathSegmentsView: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var tab: TabModel
+    let index: Int, width: CGFloat
+    var body: some View {
+        let target = tab.pathTarget
+        let segs = pathBarLayout(pathURLs(target), width: width)
+        HStack(spacing: 0) {
+            ForEach(Array(segs.enumerated()), id: \.offset) { i, s in
+                if i > 0 { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary).frame(width: pbChevron) }
+                if !s.hidden.isEmpty {
+                    Menu {
+                        ForEach(s.hidden, id: \.self) { u in Button(pathLabel(u)) { segmentClicked(u, isLast: false) } }
+                    } label: { Text("…").font(.system(size: 12)) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.horizontal, 4)
+                    .help(s.hidden.map(pathLabel).joined(separator: " › "))
+                } else {
+                    Button { segmentClicked(s.url, isLast: i == segs.count - 1) } label: {
+                        HStack(spacing: 4) {
+                            Image(nsImage: s.url.path == "/" ? ThumbCache.icon(s.url) : pathIcon(s.url, isTarget: i == segs.count - 1, tab: tab))
+                                .resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
+                            Text(s.label).font(.system(size: 12)).lineLimit(1).fixedSize()
+                        }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
+                    }.buttonStyle(.plain).help(s.url.path)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("pathbar-\(index)")
+        .accessibilityValue(segs.map { $0.label }.joined(separator: " › "))
+    }
     func segmentClicked(_ u: URL, isLast: Bool) {
         app.active = index
         let base = tab.path.standardizedFileURL.path, p = u.standardizedFileURL.path
         if tab.viewMode == .column && !tab.isGlobalSearch && p.hasPrefix(base + (base == "/" ? "" : "/")) && p != base {
-            // 在分栏里退回到这一层：保留到它为止的栏
             if isLast { return }
             if let k = tab.columnChain.firstIndex(where: { $0.standardizedFileURL.path == p }) { tab.columnChain = Array(tab.columnChain.prefix(k + 1)); tab.selection = []; return }
         }
-        if isLast && u != tab.path {
-            let it = makeItem(u)
-            if !it.isFolderLike { return }
-        }
+        if isLast && !makeItem(u).isFolderLike { return }
         tab.navigate(u)
     }
 }

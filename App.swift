@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ n: Notification) {
+        // 自动化测试：不出现在程序坞、不激活、不抢用户的焦点
+        if TestEnv.active { NSApp.setActivationPolicy(.accessory) }
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
@@ -12,6 +16,7 @@ struct FileButlerApp: App {
     init() {
         let args = CommandLine.arguments
         if args.contains("--selftest") { exit(SelfTest.run()) }
+        TestEnv.setup(args)
         if let i = args.firstIndex(of: "--bench") { exit(Bench.run(URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "/tmp/fb-perf"))) }
         ThumbCache.start()
     }

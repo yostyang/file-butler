@@ -188,16 +188,30 @@ func baseNameRange(_ name: String, isDir: Bool) -> NSRange {
     if isDir || ext.isEmpty || ns.deletingPathExtension.isEmpty { return NSRange(location: 0, length: ns.length) }
     return NSRange(location: 0, length: ns.length - (ext as NSString).length - 1)
 }
+/// 就地重命名的文本框：一放进窗口就成为第一响应者，并选中不含扩展名的部分（访达行为）
+final class InlineTF: NSTextField {
+    var selectRange = NSRange(location: 0, length: 0)
+    var focused = false
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, !focused else { return }
+        for d in [0.0, 0.05, 0.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+                guard let s = self, let w = s.window, !s.focused || s.currentEditor() == nil else { return }
+                if w.makeFirstResponder(s) { s.focused = true; s.currentEditor()?.selectedRange = s.selectRange }
+            }
+        }
+    }
+}
 struct InlineNameField: NSViewRepresentable {
     let url: URL, isDir: Bool, app: AppState
     var fontSize: CGFloat = 11, center = true
     func makeCoordinator() -> C { C(url: url, app: app) }
     func makeNSView(context: Context) -> NSTextField {
-        let tf = NSTextField(string: url.lastPathComponent)
+        let tf = InlineTF(string: url.lastPathComponent)
         tf.delegate = context.coordinator; tf.font = .systemFont(ofSize: fontSize); tf.alignment = center ? .center : .left
         tf.isBordered = true; tf.focusRingType = .exterior; tf.lineBreakMode = .byTruncatingMiddle; tf.cell?.isScrollable = true
-        let r = baseNameRange(url.lastPathComponent, isDir: isDir)
-        DispatchQueue.main.async { tf.window?.makeFirstResponder(tf); tf.currentEditor()?.selectedRange = r }
+        tf.selectRange = baseNameRange(url.lastPathComponent, isDir: isDir)
         return tf
     }
     func updateNSView(_ v: NSTextField, context: Context) {}
@@ -216,25 +230,39 @@ struct InlineNameField: NSViewRepresentable {
     }
 }
 
-/// 右键时间戳：只有真正的右键（或 ⌃点按）才会让 SwiftUI 菜单先选中被点的项目，和访达一致。
+/// 右键先选中被点的项目（访达行为）。每个项目背后放一个不接收事件的标记视图，
+/// 右键事件在派发前（本地监听器里）找到鼠标下的项目并选中它，然后菜单才弹出。
+final class ItemMarker: NSView {
+    var url: URL?
+    weak var tab: TabModel?
+    override func hitTest(_ p: NSPoint) -> NSView? { nil }
+}
+struct ItemMarkerView: NSViewRepresentable {
+    let url: URL, tab: TabModel
+    func makeNSView(context: Context) -> ItemMarker { let v = ItemMarker(); v.url = url; v.tab = tab; RightClick.markers.add(v); return v }
+    func updateNSView(_ v: ItemMarker, context: Context) { v.url = url; v.tab = tab }
+}
 enum RightClick {
-    static var last: Date = .distantPast
     static var monitor: Any?
+    static let markers = NSHashTable<ItemMarker>.weakObjects()
     static func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { e in
-            if e.type == .rightMouseDown || e.modifierFlags.contains(.control) { last = Date() }
+            if e.type == .rightMouseDown || e.modifierFlags.contains(.control) { preselect(e) }
             return e
         }
     }
-    static var recent: Bool { Date().timeIntervalSince(last) < 0.6 }
+    static func preselect(_ e: NSEvent) {
+        guard let w = e.window else { return }
+        for m in markers.allObjects where m.window === w && !m.isHiddenOrHasHiddenAncestor {
+            let r = m.convert(m.bounds, to: nil)
+            guard r.contains(e.locationInWindow), let u = m.url, let tab = m.tab else { continue }
+            if !tab.selection.contains(u) { tab.selection = [u]; tab.anchor = u }
+            return
+        }
+    }
 }
-/// 构建项目菜单时，如果被右键的项目没选中，先把它选中（异步，避免在视图更新中改状态）。
-func itemMenuURLs(_ tab: TabModel, _ it: FileItem) -> [URL] {
-    if tab.selection.contains(it.url) { return tab.selectedURLs }
-    if RightClick.recent { DispatchQueue.main.async { if !tab.selection.contains(it.url) { tab.selection = [it.url]; tab.anchor = it.url } } }
-    return [it.url]
-}
+func itemMenuURLs(_ tab: TabModel, _ it: FileItem) -> [URL] { contextURLs(tab, it) }
 
 struct ViewOptionsSheet: View {
     @EnvironmentObject var app: AppState

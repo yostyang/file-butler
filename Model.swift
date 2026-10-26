@@ -715,7 +715,7 @@ final class AppState: ObservableObject {
         let tab = activeTab
         let dir = target ?? (tab.viewMode == .column && !tab.isGlobalSearch ? tab.columnChain.last : nil) ?? tab.path
         do {
-            let u = try FileOps.newFolder(in: dir).standardizedFileURL
+            let u = try FileOps.newFolder(in: dir).realFileURL
             undoStack.append(.created([u]))
             if tab.searchActive { tab.clearSearch() }
             tab.selection = [u]; tab.anchor = u
@@ -725,12 +725,12 @@ final class AppState: ObservableObject {
     }
     func newFolderWithItems(_ urls: [URL]) {
         guard !urls.isEmpty else { NSSound.beep(); return }
-        let dir = urls[0].deletingLastPathComponent().standardizedFileURL.path
-        guard urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL.path == dir }) else { showError("无法新建文件夹", "所选项目需要在同一个文件夹里。"); return }
+        let dir = urls[0].deletingLastPathComponent().realFileURL.path
+        guard urls.allSatisfy({ $0.deletingLastPathComponent().realFileURL.path == dir }) else { showError("无法新建文件夹", "所选项目需要在同一个文件夹里。"); return }
         do {
             let r = try FileOps.newFolderWithItems(urls)
             undoStack.append(.group([.created([r.folder]), .moved(r.moved)]))
-            let u = r.folder.standardizedFileURL
+            let u = r.folder.realFileURL
             activeTab.selection = [u]; activeTab.anchor = u
             reloadVisible(); beginRename(u)
         } catch { showError("无法新建文件夹", error.localizedDescription, fda: isPermissionError(error)) }
@@ -738,20 +738,20 @@ final class AppState: ObservableObject {
     func makeAlias(_ urls: [URL]) {
         var made: [URL] = [], errs: [String] = []
         for u in urls { do { made.append(try FileOps.makeAlias(u)) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") } }
-        if !made.isEmpty { undoStack.append(.created(made)); activeTab.selection = Set(made.map { $0.standardizedFileURL }) }
+        if !made.isEmpty { undoStack.append(.created(made)); activeTab.selection = Set(made.map { $0.realFileURL }) }
         reloadVisible()
         if !errs.isEmpty { showError("无法制作替身", errs.joined(separator: "\n")) }
     }
     /// 就地重命名（画廊视图没有可编辑的名称，退回到重命名窗口）
     func beginRename(_ u: URL) {
         if activeTab.viewMode == .gallery && !activeTab.isGlobalSearch { renameReq = RenameReq(url: u) }
-        else { inlineRename = u.standardizedFileURL }
+        else { inlineRename = u.realFileURL }
     }
     func rename(_ u: URL, to name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines) != u.lastPathComponent else { return }
         do {
             let dst = try FileOps.rename(u, to: name); undoStack.append(.rename(u, dst))
-            for p in panes { for t in p.tabs where t.selection.contains(u.standardizedFileURL) { t.selection = [dst.standardizedFileURL] } }
+            for p in panes { for t in p.tabs where t.selection.contains(where: { samePath($0, u) }) { t.selection = [dst.realFileURL]; t.anchor = dst.realFileURL } }
             reloadVisible()
         } catch { showError("无法重命名", error.localizedDescription, fda: isPermissionError(error)) }
     }
@@ -792,3 +792,13 @@ final class AppState: ObservableObject {
         reloadVisible()
     }
 }
+
+extension URL {
+    /// 真实路径（/tmp → /private/tmp），和目录枚举得到的 URL 一致
+    var realFileURL: URL {
+        guard isFileURL, let r = realpath(path, nil) else { return standardizedFileURL }
+        defer { free(r) }
+        return URL(fileURLWithPath: String(cString: r))
+    }
+}
+func samePath(_ a: URL?, _ b: URL?) -> Bool { guard let a = a, let b = b else { return false }; return a.standardizedFileURL.path == b.standardizedFileURL.path }

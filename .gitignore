@@ -7,3 +7,4 @@ fb_x86
 *.dmg
 *.app
 *.zip
+build-test/

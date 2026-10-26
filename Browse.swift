@@ -38,6 +38,9 @@ final class ThumbCache {
         let req = QLThumbnailGenerator.Request(fileAt: u, size: CGSize(width: bucket, height: bucket), scale: scale, representationTypes: .thumbnail)
         QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
             guard let cg = rep?.cgImage else { done(nil); return }
+            // 内容很少的文本文件，系统会生成一条细长的缩略图；这种情况保留文件图标（和访达一致）
+            let ar = CGFloat(max(cg.width, cg.height)) / CGFloat(max(1, min(cg.width, cg.height)))
+            if ar > 2.5 { done(nil); return }
             let i = NSImage(cgImage: cg, size: NSSize(width: CGFloat(cg.width) / scale, height: CGFloat(cg.height) / scale))
             images.setObject(i, forKey: key, cost: cg.bytesPerRow * cg.height)
             done(i)
@@ -54,6 +57,8 @@ struct ThumbView: View {
     var bucket: Int { size <= 64 ? 64 : size <= 128 ? 128 : 256 }
     var body: some View {
         Image(nsImage: img ?? ThumbCache.listIcon(item)).resizable().aspectRatio(contentMode: .fit)
+            // 文档缩略图多是白底，加一圈细阴影，像访达一样能看出纸张的边界
+            .shadow(color: .black.opacity(img != nil ? 0.3 : 0), radius: 1.2, x: 0, y: 0.5)
             .task(id: "\(item.url.path)|\(bucket)|\(item.modified?.timeIntervalSince1970 ?? 0)") { load() }
             .onDisappear { if let r = req { QLThumbnailGenerator.shared.cancel(r) }; req = nil }   // 滚出屏幕就取消生成
     }
@@ -147,7 +152,7 @@ struct IconGrid: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(sel ? Color.primary.opacity(0.12) : .clear))
             HStack(spacing: 3) {
                 if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
-                if app.inlineRename == it.url { InlineNameField(url: it.url, isDir: it.isDir, app: app).frame(width: size + 30) }
+                if samePath(app.inlineRename, it.url) { InlineNameField(url: it.url, isDir: it.isDir, app: app).frame(width: size + 30) }
                 else { Text(it.name).font(.system(size: 11)).lineLimit(2).multilineTextAlignment(.center).truncationMode(.middle) }
             }
             .padding(.horizontal, 4).padding(.vertical, 1)
@@ -155,6 +160,7 @@ struct IconGrid: View {
             .foregroundStyle(sel ? Color.white : Color.primary)
         }
         .frame(width: size + 36).opacity(it.hidden ? 0.5 : 1)
+        .background(ItemMarkerView(url: it.url, tab: tab))
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
         .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: order); app.focusPane(index) })
@@ -213,7 +219,7 @@ struct ColumnBrowser: View {
                         }.padding(12).frame(width: 320).id("preview")
                     }
                     // 最后一栏右侧的空白：右键作用于最深的那个文件夹
-                    Color.clear.frame(minWidth: 40, maxWidth: .infinity, minHeight: geo.size.height)
+                    Color.clear.frame(width: max(40, geo.size.width - CGFloat(columns.count) * 231 - (previewItem != nil ? 320 : 0)), height: geo.size.height)
                         .contentShape(Rectangle())
                         .onTapGesture { app.focusPane(index); deselect(in: columns.count - 1) }
                         .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: [], bgDir: columns.last), app: app) }
@@ -243,13 +249,14 @@ struct ColumnBrowser: View {
                     let strong = tab.selection.contains(it.url)
                     HStack(spacing: 6) {
                         Image(nsImage: ThumbCache.listIcon(it)).resizable().frame(width: 16, height: 16)
-                        if app.inlineRename == it.url { InlineNameField(url: it.url, isDir: it.isDir, app: app, fontSize: 12, center: false) }
+                        if samePath(app.inlineRename, it.url) { InlineNameField(url: it.url, isDir: it.isDir, app: app, fontSize: 12, center: false) }
                         else { Text(it.name).lineLimit(1).truncationMode(.middle).font(.system(size: 12)) }
                         Spacer(minLength: 2)
                         if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
                         if it.isFolderLike { Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
                     }
                     .padding(.horizontal, 8).frame(height: 22)
+                    .background(ItemMarkerView(url: it.url, tab: tab))
                     .background(RoundedRectangle(cornerRadius: 4).fill(sel ? (strong ? accentA : Color.primary.opacity(0.12)) : .clear))
                     .foregroundStyle(strong ? Color.white : Color.primary)
                     .opacity(it.hidden ? 0.5 : 1)
@@ -308,6 +315,7 @@ struct GalleryView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(sel ? accentA : .clear, lineWidth: 2))
                                 .overlay(alignment: .bottomTrailing) { if !it.tags.isEmpty { TagDotsView(tags: it.tags).padding(3) } }
                                 .opacity(it.hidden ? 0.5 : 1)
+                                .background(ItemMarkerView(url: it.url, tab: tab))
                                 .contentShape(Rectangle())
                                 .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                                 .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: tab.display.map { $0.url }); app.focusPane(index) })

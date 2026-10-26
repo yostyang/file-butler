@@ -3,6 +3,13 @@ import Foundation
 /// `FileButler --selftest`: exercises the file operations in /tmp/fb-test only, prints PASS/FAIL, exits.
 enum SelfTest {
     static func run() -> Int32 {
+        // 自测会创建 AppState，它会记住标签页等设置；结束时把用户的设置原样还原
+        let id = Bundle.main.bundleIdentifier ?? "com.yost.filebutler"
+        let saved = UserDefaults.standard.persistentDomain(forName: id)
+        defer {
+            if let d = saved { UserDefaults.standard.setPersistentDomain(d, forName: id) } else { UserDefaults.standard.removePersistentDomain(forName: id) }
+            UserDefaults.standard.synchronize()
+        }
         let fm = FileManager.default
         let root = URL(fileURLWithPath: "/tmp/fb-test")
         var pass = 0, fail = 0
