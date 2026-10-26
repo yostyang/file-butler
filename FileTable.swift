@@ -35,7 +35,7 @@ struct FileTable: NSViewRepresentable {
         let c = context.coordinator
         let tv = FBTableView(); tv.coord = c; c.table = tv
         tv.style = .fullWidth; tv.usesAlternatingRowBackgroundColors = true; tv.allowsMultipleSelection = true
-        tv.rowHeight = 22; tv.intercellSpacing = NSSize(width: 6, height: 2); tv.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        tv.rowHeight = 22; tv.intercellSpacing = NSSize(width: 6, height: 2); tv.columnAutoresizingStyle = .noColumnAutoresizing
         tv.allowsTypeSelect = true
         for (id, title, w) in [("name", "名称", 280.0), ("date", "修改日期", 135.0), ("size", "大小", 80.0), ("kind", "种类", 120.0), ("path", "位置", 260.0)] {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
@@ -44,7 +44,8 @@ struct FileTable: NSViewRepresentable {
             if id == "size" { col.headerCell.alignment = .right }
             tv.addTableColumn(col)
         }
-        tv.autosaveName = "FBCols2_\(paneIndex)"; tv.autosaveTableColumns = true
+        // 列宽不再自动保存：由 layoutColumns 按可用宽度分配（和访达一样，名称列吸收多余宽度，窄时依次隐藏 种类 → 大小 → 修改日期）
+        let hm = NSMenu(); hm.delegate = c; tv.headerView?.menu = hm; c.headerMenu = hm
         tv.dataSource = c; tv.delegate = c
         tv.target = c; tv.doubleAction = #selector(Coordinator.doubleClick(_:))
         let menu = NSMenu(); menu.delegate = c; tv.menu = menu
@@ -53,6 +54,9 @@ struct FileTable: NSViewRepresentable {
         tv.setDraggingSourceOperationMask([.copy, .move], forLocal: false)
         let sv = NSScrollView(); sv.documentView = tv; sv.hasVerticalScroller = true; sv.hasHorizontalScroller = true; sv.autohidesScrollers = true
         sv.borderType = .noBorder
+        sv.contentView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(c, selector: #selector(Coordinator.clipResized), name: NSView.frameDidChangeNotification, object: sv.contentView)
+        NotificationCenter.default.addObserver(c, selector: #selector(Coordinator.columnResized(_:)), name: NSTableView.columnDidResizeNotification, object: tv)
         app.responders[paneIndex].v = tv
         c.sync()
         DispatchQueue.main.async { if app.active == paneIndex { tv.window?.makeFirstResponder(tv) } }
@@ -74,7 +78,77 @@ struct FileTable: NSViewRepresentable {
         weak var table: FBTableView?
         var ctrl: PaneController { app.controllers[pane] }
 
-        init(app: AppState, tab: TabModel, pane: Int) { self.app = app; self.tab = tab; self.pane = pane }
+        init(app: AppState, tab: TabModel, pane: Int) {
+            self.app = app; self.tab = tab; self.pane = pane
+            super.init()
+            NotificationCenter.default.addObserver(forName: .fbColumnsChanged, object: nil, queue: .main) { [weak self] _ in self?.layoutColumns() }
+        }
+
+        // MARK: 列布局
+        weak var headerMenu: NSMenu?
+        var laying = false
+        static let optional: [(String, String, CGFloat)] = [("date", "修改日期", 140), ("size", "大小", 72), ("kind", "种类", 120)]
+        static var enabledCols: Set<String> {
+            get { Set(UserDefaults.standard.stringArray(forKey: "listColumns") ?? ["date", "size", "kind"]) }
+            set { UserDefaults.standard.set(Array(newValue), forKey: "listColumns") }
+        }
+        static func preferredWidth(_ id: String, _ def: CGFloat) -> CGFloat {
+            let w = UserDefaults.standard.double(forKey: "listColW_\(id)"); return w > 30 ? CGFloat(w) : def
+        }
+        @objc func clipResized() { layoutColumns() }
+        @objc func columnResized(_ n: Notification) {
+            // 用户拖动列宽：记住非名称列的宽度
+            guard !laying, let tv = table, let hv = tv.headerView, hv.resizedColumn >= 0,
+                  let col = (n.userInfo?["NSTableColumn"] as? NSTableColumn), col.identifier.rawValue != "name" else { return }
+            UserDefaults.standard.set(Double(col.width), forKey: "listColW_\(col.identifier.rawValue)")
+            DispatchQueue.main.async { self.layoutColumns() }
+        }
+        /// 纯函数：给定可用宽度，返回要显示的列和宽度
+        static func plan(avail: CGFloat, enabled: Set<String>, search: Bool, spacing: CGFloat = 6) -> [(String, CGFloat)] {
+            var cols: [(String, CGFloat)] = optional.filter { enabled.contains($0.0) }.map { ($0.0, preferredWidth($0.0, $0.2)) }
+            if search { cols.append(("path", preferredWidth("path", 220))) }
+            let minName: CGFloat = 160
+            // 每列右侧都有一个列间距，再留一个间距的余量，保证最后一列完整显示、不出现横向滚动
+            func used() -> CGFloat { cols.reduce(0) { $0 + $1.1 } + CGFloat(cols.count + 2) * spacing }
+            // 太窄时先隐藏优先级低的列（位置 → 种类 → 大小 → 修改日期）
+            let dropOrder = ["path", "kind", "size", "date"]
+            for d in dropOrder where avail - used() < minName { cols.removeAll { $0.0 == d } }
+            return [("name", max(minName, avail - used()))] + cols
+        }
+        func layoutColumns() {
+            guard let tv = table, let sv = tv.enclosingScrollView else { return }
+            let avail = sv.contentView.bounds.width
+            guard avail > 50 else { return }
+            laying = true; defer { laying = false }
+            let p = Coordinator.plan(avail: avail, enabled: Coordinator.enabledCols, search: tab.isGlobalSearch, spacing: tv.intercellSpacing.width)
+            let show = Dictionary(uniqueKeysWithValues: p.map { ($0.0, $0.1) })
+            for col in tv.tableColumns {
+                let id = col.identifier.rawValue
+                if let w = show[id] { col.isHidden = false; if abs(col.width - w) > 0.5 { col.width = w } } else { col.isHidden = true }
+            }
+        }
+        func menuForHeader(_ menu: NSMenu) {
+            menu.removeAllItems()
+            let on = Coordinator.enabledCols
+            for (id, title, _) in Coordinator.optional {
+                let it = NSMenuItem(title: title, action: #selector(toggleCol(_:)), keyEquivalent: "")
+                it.target = self; it.representedObject = id; it.state = on.contains(id) ? .on : .off
+                menu.addItem(it)
+            }
+            menu.addItem(.separator())
+            let r = NSMenuItem(title: "恢复默认列宽", action: #selector(resetCols), keyEquivalent: ""); r.target = self; menu.addItem(r)
+        }
+        @objc func toggleCol(_ s: NSMenuItem) {
+            guard let id = s.representedObject as? String else { return }
+            var e = Coordinator.enabledCols; if e.contains(id) { e.remove(id) } else { e.insert(id) }
+            Coordinator.enabledCols = e
+            NotificationCenter.default.post(name: .fbColumnsChanged, object: nil)
+        }
+        @objc func resetCols() {
+            for (id, _, _) in Coordinator.optional { UserDefaults.standard.removeObject(forKey: "listColW_\(id)") }
+            UserDefaults.standard.removeObject(forKey: "listColW_path")
+            NotificationCenter.default.post(name: .fbColumnsChanged, object: nil)
+        }
 
         func item(_ r: Int) -> FileItem? {
             guard r >= 0, r < rows.count, case .item(let it) = rows[r] else { return nil }
@@ -90,7 +164,7 @@ struct FileTable: NSViewRepresentable {
                 lastVersion = tab.version
                 if tab.groupKey == .none || tab.isGlobalSearch { rows = tab.display.map { .item($0) } }
                 else { rows = tab.groups.flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
-                tv.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("path"))?.isHidden = !tab.isGlobalSearch
+                layoutColumns()
                 suppress = true
                 let d = NSSortDescriptor(key: tab.sortKey.rawValue, ascending: tab.asc)
                 if tv.sortDescriptors.first != d { tv.sortDescriptors = [d] }
@@ -248,6 +322,7 @@ struct FileTable: NSViewRepresentable {
         }
 
         func menuNeedsUpdate(_ menu: NSMenu) {
+            if menu === headerMenu { menuForHeader(menu); return }
             guard let tv = table else { return }
             let r = tv.clickedRow
             if r >= 0 && item(r) != nil && !tv.selectedRowIndexes.contains(r) { tv.selectRowIndexes([r], byExtendingSelection: false) }
@@ -256,3 +331,5 @@ struct FileTable: NSViewRepresentable {
         }
     }
 }
+
+extension Notification.Name { static let fbColumnsChanged = Notification.Name("fbColumnsChanged") }

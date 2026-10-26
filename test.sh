@@ -24,7 +24,7 @@ echo "== 4/4 截图对比 =="
 GOLD=Tests/golden
 if [ "${1:-}" = "--approve" ]; then
   mkdir -p $GOLD; rm -f $GOLD/*.png
-  cp $OUT/pb-*.png $OUT/pane-list.png $OUT/pane-column.png $OUT/video-preview.png $GOLD/
+  cp $OUT/pb-*.png $OUT/pane-list.png $OUT/pane-column.png $OUT/video-preview.png $OUT/list-view.png $GOLD/
   echo "已把本次截图设为基准图：$(ls $GOLD | wc -l | tr -d ' ') 张"
 else
   "$APP" --compare "$PWD/$GOLD" "$PWD/$OUT" | tee build-test/compare.log | grep -E "FAIL|对比结果"

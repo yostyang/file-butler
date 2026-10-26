@@ -409,7 +409,13 @@ final class UITestRunner {
         // 6b. 图标/分栏视图：右键未选中的项目会先选中它
         for (key, code, name) in [("1", UInt16(18), "图标"), ("3", UInt16(20), "分栏")] {
             press(key, code, .command); await settle(1.0)
-            t.selection = []; t.columnChain = []; await settle(1.2)   // 等图标布局稳定（缩略图异步加载）
+            t.selection = []; t.columnChain = []; await settle(0.4)
+            // 等到第一个项目的位置标记已经放进窗口并且有尺寸（条件等待，最多 4 秒）
+            let firstURL = t.display.first?.url
+            for _ in 0..<40 {
+                if RightClick.markers.allObjects.contains(where: { $0.window === win && samePath($0.url, firstURL) && $0.bounds.width > 0 }) { break }
+                await sleep(0.1)
+            }
             let rr = paneRect(0)
             let p = name == "图标" ? NSPoint(x: rr.minX + 12 + 58, y: rr.maxY - 12 - 50) : NSPoint(x: rr.minX + 80, y: rr.maxY - 4 - 11)
             let titles = await rightClickMenu(p)
@@ -419,6 +425,43 @@ final class UITestRunner {
             if name == "图标" { shot("ui-icon-rightclick-selected") }
         }
         press("2", 19, .command); await settle(0.6)
+        // 6c. 列表视图的列：名称、修改日期、大小、种类都可见（双栏和单栏、不同窗口宽度）
+        func visibleCols(_ pane: Int) -> [String: CGFloat] {
+            var out: [String: CGFloat] = [:]
+            func walk(_ v: NSView) {
+                if let tv = v as? NSTableView, tv.window === win, let d = tv.delegate as? FileTable.Coordinator, d.pane == pane, let clip = tv.enclosingScrollView?.contentView {
+                    if TestEnv.debug { print("DEBUG cols pane=\(pane) clip=\(clip.bounds.width) tv=\(tv.frame.width) " + tv.tableColumns.enumerated().map { "\($0.element.identifier.rawValue):\($0.element.isHidden ? "h" : "")\(Int($0.element.width))@\(Int(tv.rect(ofColumn: $0.offset).maxX))" }.joined(separator: " ")) }
+                    for (i, c) in tv.tableColumns.enumerated() where !c.isHidden && c.width > 0 {
+                        let r = tv.convert(tv.rect(ofColumn: i), to: clip)
+                        if r.maxX <= clip.bounds.maxX + 1 { out[c.identifier.rawValue] = c.width }
+                    }
+                }
+                v.subviews.forEach(walk)
+            }
+            walk(win.contentView!.superview!)
+            return out
+        }
+        app.dual = true; app.active = 1; press("2", 19, .command); app.active = 0; press("2", 19, .command); await settle(0.8)
+        if TestEnv.debug { print("DEBUG modes \(app.panes[0].tab.viewMode) \(app.panes[1].tab.viewMode)") }
+        for w in [1280.0, 900.0] {
+            win.setFrame(NSRect(x: -6000, y: -6000, width: w, height: 780), display: true); await settle(0.8)
+            for pn in [0, 1] {
+                let cols = visibleCols(pn)
+                let pw = paneRect(pn).width
+                // 期望：按这一栏的宽度，规划出来的列都要完整可见；栏宽够 320 时至少有名称和修改日期
+                let want = FileTable.Coordinator.plan(avail: pw, enabled: ["date", "size", "kind"], search: false).map { $0.0 }
+                let ok = want.allSatisfy { cols[$0] != nil } && (pw < 320 || (cols["name"] != nil && cols["date"] != nil)) && (pw < 560 || cols.count == 4)
+                check("列表（双栏，窗口 \(Int(w))，\(pn == 0 ? "左" : "右")栏宽 \(Int(pw))）：列完整可见、没有被挤出可视区", ok, cols.map { "\($0.key)=\(Int($0.value))" }.sorted().joined(separator: " "))
+            }
+        }
+        win.setFrame(NSRect(x: -6000, y: -6000, width: 1280, height: 780), display: true); await settle(0.8)
+        shot("list-view-window")
+        let rp = paneRect(1)
+        shot("list-view", crop: win.contentView!.superview!.convert(rp, from: nil))
+        app.dual = false; await settle(0.8)
+        let single = visibleCols(0)
+        check("列表（单栏）：名称/修改日期/大小/种类列可见", ["name", "date", "size", "kind"].allSatisfy { single[$0] != nil }, single.map { "\($0.key)=\(Int($0.value))" }.sorted().joined(separator: " "))
+        check("列宽规划：很窄时依次隐藏 种类 → 大小", FileTable.Coordinator.plan(avail: 330, enabled: ["date", "size", "kind"], search: false).map { $0.0 } == ["name", "date"])
         // 7. ⌘F 搜索
         press("f", 3, .command); await settle(0.6)
         if TestEnv.debug {
