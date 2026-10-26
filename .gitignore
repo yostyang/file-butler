@@ -4,3 +4,6 @@ fb_arm
 fb_x86
 *.iconset
 .DS_Store
+*.dmg
+*.app
+*.zip

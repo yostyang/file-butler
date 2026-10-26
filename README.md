@@ -39,8 +39,8 @@
 
 ## 安装
 
-1. 下载 `文件管家.dmg`，打开后把「文件管家」拖进「应用程序」。
-2. 首次打开如果提示「无法验证开发者」：打开 **系统设置 › 隐私与安全性**，在页面下方点 **仍要打开**。
+1. 到 [Releases 页面](https://github.com/yostyang/file-butler/releases/latest) 下载 `File-Butler-0.3.dmg`，打开后把「文件管家」拖进「应用程序」。
+2. App 为自签名（ad-hoc），首次打开请在「应用程序」里**右键 › 打开**；如果仍提示「无法验证开发者」：打开 **系统设置 › 隐私与安全性**，在页面下方点 **仍要打开**。
    也可以在终端执行：
    ```bash
    xattr -dr com.apple.quarantine /Applications/文件管家.app
