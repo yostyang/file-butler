@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import QuickLookThumbnailing
 
 struct ContentView: View {
     @EnvironmentObject var app: AppState
@@ -12,7 +11,7 @@ struct ContentView: View {
                 HSplitView {
                     PaneView(pane: app.panes[0], index: 0)
                     if app.dual { PaneView(pane: app.panes[1], index: 1) }
-                    if app.showInfo { InfoPanel().frame(minWidth: 220, idealWidth: 260, maxWidth: 360) }
+                    if app.showPreview { PreviewPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480) }
                 }
                 Divider()
                 StatusBar()
@@ -35,16 +34,98 @@ struct ContentView: View {
             Button { app.activeTab.goForward() } label: { Label("前进", systemImage: "chevron.right") }.help("前进 ⌘]")
             Button { app.activeTab.goUp() } label: { Label("上级", systemImage: "arrow.up") }.help("上级文件夹 ⌘↑")
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { app.newFolder() } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }.help("新建文件夹 ⇧⌘N")
-            Button { app.copyToOther(move: false) } label: { Label("拷贝到另一栏", systemImage: "doc.on.doc") }.help("拷贝到另一栏 F5").disabled(!app.dual)
-            Button { app.copyToOther(move: true) } label: { Label("移动到另一栏", systemImage: "arrow.right.square") }.help("移动到另一栏 F6").disabled(!app.dual)
-            Button { app.trash(app.activeTab.selectedURLs) } label: { Label("移到废纸篓", systemImage: "trash") }.help("移到废纸篓 ⌘⌫")
-            Button { app.sizeReq = SizeReq(url: app.activeTab.path) } label: { Label("空间分析", systemImage: "chart.pie") }.help("分析当前文件夹占用空间 ⌥⌘S")
-            Button { app.showHidden.toggle() } label: { Label("隐藏文件", systemImage: app.showHidden ? "eye" : "eye.slash") }.help("显示/隐藏隐藏文件 ⇧⌘.")
+        ToolbarItem(placement: .primaryAction) { ViewModePicker(tab: app.activeTab) }
+        ToolbarItem(placement: .primaryAction) { GroupMenu(tab: app.activeTab) }
+        ToolbarItem(placement: .primaryAction) {
             Button { app.dual.toggle() } label: { Label("双栏", systemImage: app.dual ? "rectangle.split.2x1.fill" : "rectangle") }.help("单栏/双栏 ⌥⌘U")
-            Button { app.showInfo.toggle() } label: { Label("信息面板", systemImage: "sidebar.right") }.help("信息与预览面板 ⌥⌘I")
         }
+        ToolbarItemGroup(placement: .primaryAction) {
+            ShareButton(tab: app.activeTab)
+            TagButton(tab: app.activeTab)
+            MoreMenu(tab: app.activeTab, pane: app.active)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { app.sizeReq = SizeReq(url: app.activeTab.path) } label: { Label("空间分析", systemImage: "chart.pie") }.help("分析当前文件夹占用空间 ⌥⌘S")
+            Button { app.showPreview.toggle() } label: { Label("预览", systemImage: "sidebar.right") }.help("预览面板 ⇧⌘P")
+        }
+        ToolbarItem(placement: .primaryAction) { SearchBox(tab: app.activeTab).id(app.activeTab.id) }
+    }
+}
+
+struct ViewModePicker: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var tab: TabModel
+    var body: some View {
+        Picker("显示方式", selection: Binding(get: { tab.viewMode }, set: { app.setViewMode($0) })) {
+            ForEach(ViewMode.allCases, id: \.self) { m in Label(m.title, systemImage: m.symbol).labelStyle(.iconOnly).tag(m) }
+        }.pickerStyle(.segmented).help("图标 ⌘1 · 列表 ⌘2 · 分栏 ⌘3 · 画廊 ⌘4")
+    }
+}
+struct GroupMenu: View {
+    @ObservedObject var tab: TabModel
+    var body: some View {
+        Menu {
+            Toggle("使用分组", isOn: Binding(get: { tab.groupKey != .none }, set: { tab.groupKey = $0 ? .kind : .none }))
+            Picker("分组方式", selection: $tab.groupKey) { ForEach(GroupKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
+            Divider()
+            Picker("排序方式", selection: Binding(get: { tab.sortKey }, set: { tab.setSort($0, asc: tab.asc) })) { ForEach(SortKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
+            Picker("顺序", selection: Binding(get: { tab.asc }, set: { tab.setSort(tab.sortKey, asc: $0) })) { Text("升序").tag(true); Text("降序").tag(false) }.pickerStyle(.inline)
+        } label: { Label("分组", systemImage: "square.grid.3x1.below.line.grid.1x2") }
+        .help("分组与排序方式")
+    }
+}
+struct ShareButton: View {
+    @ObservedObject var tab: TabModel
+    var body: some View {
+        let urls = tab.selectedURLs
+        ShareLink(items: urls) { Label("共享", systemImage: "square.and.arrow.up") }.disabled(urls.isEmpty).help("共享所选项目（隔空投送、邮件、信息等）")
+    }
+}
+struct TagButton: View {
+    @ObservedObject var tab: TabModel
+    @State var show = false
+    var body: some View {
+        Button { show.toggle() } label: { Label("标签", systemImage: "tag") }.help("设置标签")
+            .popover(isPresented: $show, arrowEdge: .bottom) { TagPopover(tab: tab) }
+    }
+}
+struct MoreMenu: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var tab: TabModel
+    let pane: Int
+    var body: some View {
+        Menu {
+            ItemActions(app: app, tab: tab, pane: pane, urls: tab.selectedURLs)
+            Divider()
+            Button(app.showPreview ? "隐藏预览" : "显示预览") { app.showPreview.toggle() }
+            Button(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件") { app.showHidden.toggle() }
+            Button("空间分析") { app.sizeReq = SizeReq(url: tab.path) }
+            Button("把当前文件夹加入书签") { app.addBookmark(tab.path) }
+        } label: { Label("更多", systemImage: "ellipsis.circle") }.help("更多操作")
+    }
+}
+struct SearchBox: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var tab: TabModel
+    @State var text = ""
+    @FocusState var focused: Bool
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
+                .onExitCommand { text = ""; tab.clearSearch(); app.focusActiveTable() }
+            if !text.isEmpty || tab.tagFilter != nil {
+                Button { text = ""; tab.clearSearch(); app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 7).frame(width: 190, height: 26)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(0.15), lineWidth: focused ? 1.5 : 1))
+        .onAppear { text = tab.searchText }
+        .onChange(of: text) { tab.setSearch($0) }
+        .onChange(of: tab.searchText) { if $0 != text { text = $0 } }
+        .onChange(of: app.searchFocus) { _ in focused = true }
+        .help("搜索 ⌘F")
     }
 }
 
@@ -65,6 +146,19 @@ struct SidebarView: View {
                 }
             }
             Section("最近访问") { ForEach(Array(app.recents.prefix(15)), id: \.self) { row($0) } }
+            Section("标签") {
+                ForEach(app.allTags, id: \.self) { t in
+                    Button { app.activeTab.showTag(t); app.objectWillChange.send() } label: {
+                        HStack(spacing: 8) {
+                            if let c = tagColor(t) { Circle().fill(Color(nsColor: c)).frame(width: 10, height: 10) } else { Circle().stroke(Color.secondary, lineWidth: 1.2).frame(width: 10, height: 10) }
+                            Text(t).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }.padding(.leading, 3).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                    .fontWeight(app.activeTab.tagFilter == t ? .semibold : .regular)
+                    .help("用 Spotlight 查找带「\(t)」标签的文件")
+                }
+            }
             Section("位置") {
                 ForEach(app.volumes) { v in
                     Button { app.go(v.url) } label: {
@@ -158,16 +252,50 @@ struct TabContent: View {
     var body: some View {
         VStack(spacing: 0) {
             PathBar(tab: tab, index: index)
+            if tab.searchActive { SearchScopeBar(tab: tab) }
             Divider()
             ZStack {
-                FileTable(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection)
-                if tab.permissionDenied { PermissionView() }
+                switch effectiveMode {
+                case .list: FileTable(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection)
+                case .icon: IconGrid(tab: tab, index: index)
+                case .column: ColumnBrowser(tab: tab, index: index)
+                case .gallery: GalleryView(tab: tab, index: index)
+                }
+                if tab.isGlobalSearch {
+                    if tab.searching && tab.display.isEmpty { ProgressView("正在用 Spotlight 搜索…").controlSize(.small) }
+                    else if tab.display.isEmpty { Text("没有找到结果").foregroundStyle(.secondary).allowsHitTesting(false) }
+                }
+                else if tab.permissionDenied { PermissionView() }
                 else if let e = tab.error { VStack(spacing: 8) { Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundStyle(.orange); Text("无法读取这个文件夹"); Text(e).font(.caption).foregroundStyle(.secondary) }.padding().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .controlBackgroundColor)) }
-                else if tab.items.isEmpty && !tab.loading { Text("空文件夹").foregroundStyle(.secondary).allowsHitTesting(false) }
+                else if tab.display.isEmpty && !tab.loading && effectiveMode != .column { Text(tab.searchActive ? "没有匹配的项目" : "空文件夹").foregroundStyle(.secondary).allowsHitTesting(false) }
                 if tab.loading && tab.items.isEmpty { ProgressView().controlSize(.small) }
             }
         }
     }
+}
+
+extension TabContent {
+    var effectiveMode: ViewMode { tab.isGlobalSearch || (tab.searchActive && tab.viewMode == .column) ? .list : tab.viewMode }
+}
+struct SearchScopeBar: View {
+    @ObservedObject var tab: TabModel
+    var body: some View {
+        HStack(spacing: 8) {
+            if let t = tagFilter {
+                Image(systemName: "tag.fill").foregroundStyle(tagColor(t).map { Color(nsColor: $0) } ?? accentA)
+                Text("标签「\(t)」（整台 Mac）").font(.system(size: 12, weight: .medium))
+            } else {
+                Text("搜索：").font(.system(size: 12)).foregroundStyle(.secondary)
+                Picker("", selection: $tab.searchScope) { ForEach(SearchScope.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
+            }
+            if tab.searching { ProgressView().controlSize(.small) }
+            Text("\(tab.display.count) 个结果" + (tab.isGlobalSearch && tab.display.count >= 2000 ? "（只显示前 2000 个）" : "")).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button("清除") { tab.clearSearch() }.buttonStyle(.borderless).font(.caption)
+        }.padding(.horizontal, 10).frame(height: 30).background(accentA.opacity(0.06))
+    }
+    var tagFilter: String? { tab.tagFilter }
 }
 
 struct PermissionView: View {
@@ -233,6 +361,7 @@ struct StatusBar: View {
     var body: some View { StatusContent(tab: app.activeTab, busy: app.busyText, dual: app.dual, active: app.active) }
 }
 struct StatusContent: View {
+    @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let busy: String?, dual: Bool, active: Int
     var body: some View {
@@ -240,68 +369,18 @@ struct StatusContent: View {
         let selSize = sel.filter { !$0.isFolderLike }.reduce(Int64(0)) { $0 + $1.size }
         HStack(spacing: 10) {
             if dual { Text(active == 0 ? "左栏" : "右栏").fontWeight(.semibold).foregroundStyle(accentA) }
-            Text("\(tab.items.count) 个项目")
+            Text("\(tab.display.count) 个项目")
             if !sel.isEmpty { Text("已选 \(sel.count) 项，\(fmtBytes(selSize))" + (sel.contains { $0.isFolderLike } ? "（不含文件夹）" : "")) }
             if let b = busy { ProgressView().controlSize(.small); Text(b) }
             Spacer()
+            if tab.viewMode == .icon && !tab.isGlobalSearch {
+                Image(systemName: "photo").font(.system(size: 9))
+                Slider(value: $app.iconSize, in: 32...256).frame(width: 110).controlSize(.mini)
+                Image(systemName: "photo").font(.system(size: 13))
+            }
             if let f = freeSpace(tab.path) { Text("可用空间 \(fmtBytes(f))") }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24)
-    }
-}
-
-// MARK: Info panel
-struct InfoPanel: View {
-    @EnvironmentObject var app: AppState
-    var body: some View { InfoContent(tab: app.activeTab).id(app.activeTab.id) }
-}
-struct InfoContent: View {
-    @ObservedObject var tab: TabModel
-    @State var thumb: NSImage?
-    var body: some View {
-        let sel = tab.selectedItems
-        let item = sel.first ?? makeItem(tab.path)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack { Spacer()
-                    Image(nsImage: thumb ?? NSWorkspace.shared.icon(forFile: item.url.path)).resizable().aspectRatio(contentMode: .fit).frame(width: 128, height: 128)
-                    Spacer() }
-                Text(item.name.isEmpty ? "/" : item.name).font(.headline).textSelection(.enabled)
-                if sel.count > 1 { Text("已选 \(sel.count) 项（下方显示第一项）").font(.caption).foregroundStyle(.secondary) }
-                if sel.isEmpty { Text("当前文件夹").font(.caption).foregroundStyle(.secondary) }
-                Divider()
-                info("种类", item.kind)
-                info("大小", item.isFolderLike ? "--（用空间分析计算）" : "\(fmtBytes(item.size))（\(item.size) 字节）")
-                info("创建时间", fmtDate(item.created))
-                info("修改时间", fmtDate(item.modified))
-                info("权限", perms(item.url))
-                info("位置", item.url.path)
-                HStack {
-                    Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-                    Button("拷贝路径") { copyPaths([item.url]) }
-                }.controlSize(.small)
-            }.padding(14)
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .task(id: item.url) { thumb = nil; loadThumb(item.url) }
-    }
-    func info(_ k: String, _ v: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(k).font(.caption).foregroundStyle(.secondary)
-            Text(v.isEmpty ? "--" : v).font(.system(size: 12)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-    func perms(_ u: URL) -> String {
-        guard let a = try? FileManager.default.attributesOfItem(atPath: u.path), let p = (a[.posixPermissions] as? NSNumber)?.intValue else { return "--" }
-        let c = Array("rwxrwxrwx")
-        let s = String((0..<9).map { p & (1 << (8 - $0)) != 0 ? c[$0] : "-" })
-        return "\(s)（\(String(p, radix: 8))） 所有者：\(a[.ownerAccountName] as? String ?? "?")"
-    }
-    func loadThumb(_ u: URL) {
-        let req = QLThumbnailGenerator.Request(fileAt: u, size: CGSize(width: 256, height: 256), scale: 2, representationTypes: .thumbnail)
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
-            if let img = rep?.nsImage { DispatchQueue.main.async { if tab.selectedItems.first?.url ?? tab.path == u { thumb = img } } }
-        }
     }
 }
 

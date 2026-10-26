@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct FileButlerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject var app = AppState()
+    init() { if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run()) } }
     var body: some Scene {
         Window("文件管家", id: "main") {
             ContentView().environmentObject(app).frame(minWidth: 900, minHeight: 520)
@@ -26,10 +27,11 @@ struct FileButlerApp: App {
                 Button("撤销上一步文件操作") { app.undo() }.keyboardShortcut("z", modifiers: [.command, .option])
             }
             CommandMenu("操作") {
-                Button("打开所选") { app.activeCoordinator?.openSelection() }.keyboardShortcut(.downArrow)
-                Button("快速查看") { app.activeCoordinator?.quickLook() }.keyboardShortcut("y")
-                Button("重命名…") { app.activeCoordinator?.renameSelection() }
+                Button("打开所选") { app.activeController.openSelection() }.keyboardShortcut(.downArrow)
+                Button("快速查看") { app.activeController.quickLook() }.keyboardShortcut("y")
+                Button("重命名…") { app.activeController.renameSelection() }
                 Button("制作副本") { app.duplicate(app.activeTab.selectedURLs) }
+                Button("压缩") { app.zip(app.activeTab.selectedURLs) }
                 Button("移到废纸篓") { app.trash(app.activeTab.selectedURLs) }
                 Divider()
                 Button("拷贝到另一栏") { app.copyToOther(move: false) }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(UInt32(NSF5FunctionKey))!)), modifiers: [])
@@ -54,9 +56,16 @@ struct FileButlerApp: App {
                 Button("切换左右栏") { app.switchPane() }
             }
             CommandGroup(before: .toolbar) {
+                ForEach(Array(ViewMode.allCases.enumerated()), id: \.offset) { i, m in
+                    Button("\(m.title)显示方式") { app.setViewMode(m) }.keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
+                }
+                Divider()
+                Button("搜索") { app.searchFocus += 1 }.keyboardShortcut("f")
+                Button(app.showPreview ? "隐藏预览" : "显示预览") { app.showPreview.toggle() }.keyboardShortcut("p", modifiers: [.command, .shift])
+                Divider()
                 Button(app.dual ? "切换为单栏" : "切换为双栏") { app.dual.toggle() }.keyboardShortcut("u", modifiers: [.command, .option])
                 Button(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件") { app.showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
-                Button(app.showInfo ? "隐藏信息面板" : "显示信息面板") { app.showInfo.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
+                Button(app.showPreview ? "隐藏信息面板" : "显示信息面板") { app.showPreview.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
                 Divider()
             }
         }
