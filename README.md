@@ -1,5 +1,7 @@
 # 文件管家（File Butler）
 
+🌐 介绍页：https://yostyang.github.io/file-butler/
+
 一个原生的 macOS 双栏文件管理器，灵感来自 Path Finder。纯 Swift / SwiftUI + AppKit 编写，无第三方依赖，支持 Apple 芯片和 Intel，macOS 13 及以上。
 
 ## v0.3 性能优化

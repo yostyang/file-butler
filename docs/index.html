@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件管家 · File Butler</title>
+<meta name="description" content="轻量的 macOS 双栏文件管理器。A lightweight dual-pane file manager for macOS.">
+<link rel="icon" href="icon.png">
+<style>
+:root{--ink:#111112;--mute:#6b6f7b;--line:#e9eaeb;--bg:#fcfcfc;--gray:#f3f4f6;--a:#5b55f5;--b:#2ea7f2}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;font-weight:500;font-size:14px;padding:10px 20px;transition:.2s}
+.pill.blue{background:var(--a);color:#fff}.pill.blue:hover{background:#4842e0}
+.pill.light{background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+.pill.sm{font-size:13px;padding:7px 15px}
+/* header */
+header{position:fixed;top:0;left:0;right:0;z-index:10;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 max(24px,calc((100vw - 1040px)/2));transition:.25s}
+header.scrolled{background:rgba(252,252,252,.85);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;opacity:0;transition:.25s}
+header.scrolled .brand{opacity:1}
+.brand img{width:26px;height:26px}
+.right{display:flex;align-items:center;gap:10px}
+.lang{display:flex;background:var(--gray);border-radius:999px;padding:3px}
+.lang button{border:0;background:none;font:inherit;font-size:12px;padding:5px 11px;border-radius:999px;cursor:pointer;color:var(--mute)}
+.lang button.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.08)}
+/* hero */
+.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:80px 24px}
+.hero img.logo{width:84px;height:84px;border-radius:20px;box-shadow:0 10px 30px rgba(60,50,160,.25);margin-bottom:36px}
+h1{font-size:clamp(34px,5.4vw,60px);font-weight:500;letter-spacing:-.03em;line-height:1.15}
+.rot{display:inline-block;position:relative;color:var(--a);min-width:2.4em;text-align:center}
+.rot span{display:inline-block;animation:in .5s ease}
+@keyframes in{from{opacity:0;transform:translateY(.4em)}to{opacity:1;transform:none}}
+.hero p{margin-top:22px;font-size:17px;color:var(--mute);max-width:560px;line-height:1.7}
+.hero .cta{margin-top:34px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.hero small{font-size:12px;color:var(--mute)}
+.more{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:9;font-size:13px;transition:.3s}
+.more.hide{opacity:0;pointer-events:none}
+/* sections */
+section{padding:120px 24px}
+section.g{background:var(--gray)}
+.inner{max-width:880px;margin:0 auto}
+h2{font-size:clamp(26px,3.4vw,36px);font-weight:500;letter-spacing:-.02em;line-height:1.25}
+.lead{color:var(--mute);font-size:16px;line-height:1.75;margin-top:16px}
+.center{text-align:center}.center .lead{max-width:600px;margin-left:auto;margin-right:auto}
+.story{max-width:620px;margin:0 auto}
+.story p{font-size:18px;line-height:1.85;color:#3b3e48;margin-top:22px}
+.story p.big{font-size:24px;color:var(--ink);font-weight:500;letter-spacing:-.01em}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
+.row.rev .txt{order:2}
+.txt{max-width:340px}
+.media{background:#fff;border-radius:24px;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;padding:28px;box-shadow:0 1px 0 var(--line)}
+section.g .media{background:#fff}section:not(.g) .media{background:var(--gray)}
+/* mini UI */
+.ui{width:100%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(20,20,60,.08);padding:16px;font-size:12px}
+.ui .h{font-weight:600;font-size:13px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.ui .it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #f1f1f4}
+.ui .it:first-of-type{border-top:0}
+.ui .it em{flex:1;font-style:normal}
+.ui .it small{display:block;color:var(--mute);font-size:10.5px}
+.dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;flex:none}.dot.ok{background:#22c55e}
+.sw{width:28px;height:16px;border-radius:9px;background:var(--a);position:relative;flex:none}.sw:after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
+.sw.off{background:#d9dae0}.sw.off:after{left:2px;right:auto}
+.tag{font-size:10.5px;color:var(--a);background:#eeedff;border-radius:999px;padding:3px 9px;flex:none}
+.score{width:44px;height:44px;border-radius:12px;background:#fff4e5;color:#e58a00;font-weight:700;font-size:17px;display:grid;place-items:center}
+.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.m{background:#f7f7fa;border-radius:10px;padding:10px}.m b{display:block;font-size:18px;margin:2px 0 6px}.m small{color:var(--mute);font-size:10px}
+.bar{height:4px;border-radius:4px;background:#e4e3fb;overflow:hidden}.bar i{display:block;height:100%;background:var(--a)}
+.bar.o i{background:#f59e0b}
+/* list */
+.list{display:grid;grid-template-columns:1fr 1.3fr;gap:64px;align-items:center}
+.list ul{list-style:none}
+.list li{display:flex;gap:14px;padding:20px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border:0}
+.list li .ic{font-size:16px;color:var(--mute);width:20px;flex:none;line-height:1.4}
+.list li b{font-weight:600;font-size:15px}
+.list li p{color:var(--mute);font-size:13.5px;line-height:1.65;margin-top:4px}
+.steps{counter-reset:s;max-width:620px;margin:40px auto 0;text-align:left}
+.steps li{list-style:none;counter-increment:s;position:relative;padding:18px 0 18px 48px;border-bottom:1px solid var(--line);font-size:15px;line-height:1.7;color:#3b3e48}
+.steps li:before{content:counter(s);position:absolute;left:0;top:18px;width:28px;height:28px;border-radius:50%;background:#fff;border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:600}
+code{background:#fff;border:1px solid var(--line);padding:2px 7px;border-radius:6px;font-size:12.5px;word-break:break-all}
+.final{padding:160px 24px}
+.final h2{font-size:clamp(30px,4.2vw,46px)}
+.final .pill{margin-top:30px;font-size:15px;padding:13px 28px}
+footer{display:flex;justify-content:space-between;align-items:center;max-width:1040px;margin:0 auto;padding:28px 24px;font-size:12px;color:var(--mute);border-top:1px solid var(--line)}
+footer nav{display:flex;gap:20px}
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
+.reveal.on{opacity:1;transform:none}
+@media(max-width:760px){.row,.list{grid-template-columns:1fr;gap:32px}.row.rev .txt{order:0}.txt{max-width:none}section{padding:80px 20px}}
+.note{font-size:10.5px;color:var(--mute);text-align:center;margin-top:10px}
+.panes{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pane{background:#f7f7fa;border-radius:10px;padding:8px}.pane.act{box-shadow:inset 0 2px 0 var(--a)}
+.tabs{display:flex;gap:4px;margin-bottom:6px}.tabs span{font-size:10px;padding:3px 7px;border-radius:6px;background:#ececf2}.tabs span.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.fr{display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:11px}.fr.sel{background:var(--a);color:#fff;border-radius:5px}
+.fi{width:12px;height:10px;border-radius:2px;background:#7fb5f5;flex:none}.fi.d{background:#e2e3ea}
+.seg{display:flex;gap:2px;background:#ececf2;border-radius:7px;padding:2px;width:max-content;margin-bottom:10px}.seg i{width:24px;height:18px;border-radius:5px;font-style:normal;font-size:10px;display:grid;place-items:center;color:var(--mute)}.seg i.on{background:#fff;color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.grid div{aspect-ratio:1;border-radius:8px;background:linear-gradient(135deg,#e8e6ff,#d9f0ff)}.grid div.s{outline:2px solid var(--a)}
+.pv{height:110px;border-radius:10px;background:linear-gradient(135deg,#6b5cf6,#2ea7f2);margin-bottom:8px}
+.kv{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-top:1px solid #f1f1f4}.kv span{color:var(--mute)}
+.td{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:3px;vertical-align:middle}
+.cmp{width:100%;border-collapse:collapse;font-size:12px}.cmp td,.cmp th{padding:7px 4px;border-top:1px solid #f1f1f4;text-align:left}.cmp th{color:var(--mute);font-weight:500;border:0}.cmp b{color:var(--a)}
+</style>
+</head>
+<body>
+<header id="hd">
+  <a class="brand" href="#"><img src="icon.png" alt=""><span data-i="name"></span></a>
+  <div class="right">
+    <div class="lang"><button data-l="zh">中文</button><button data-l="en">EN</button></div>
+    <a class="pill blue sm" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dl"></a>
+  </div>
+</header>
+<div class="hero">
+  <img class="logo" src="icon.png" alt="">
+  <h1><span data-i="h1a"></span><br><span data-i="h1b"></span> <span class="rot" id="rot"><span></span></span> <span data-i="h1c"></span></h1>
+  <p data-i="sub"></p>
+  <div class="cta">
+    <a class="pill blue" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dlfree"></a>
+    <small data-i="meta"></small>
+  </div>
+</div>
+<a class="pill light more" id="more" href="#story"><span data-i="more"></span> ↓</a>
+
+<section class="g" id="story">
+  <div class="story reveal">
+    <h2 data-i="whyT"></h2>
+    <p data-i="why1"></p>
+    <p class="big" data-i="why2"></p>
+    <p data-i="why3"></p>
+  </div>
+</section>
+
+<section>
+  <div class="inner row reveal">
+    <div class="txt"><h2 data-i="f1T"></h2><p class="lead" data-i="f1D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <div class="panes">
+        <div class="pane act"><div class="tabs"><span class="on" data-i="u_home"></span><span>Projects</span></div>
+          <div class="fr"><i class="fi d"></i>Desktop</div><div class="fr sel"><i class="fi"></i>report.pdf</div><div class="fr"><i class="fi"></i>notes.md</div><div class="fr"><i class="fi d"></i>Photos</div></div>
+        <div class="pane"><div class="tabs"><span class="on" data-i="u_dl"></span></div>
+          <div class="fr"><i class="fi"></i>setup.dmg</div><div class="fr"><i class="fi"></i>photo.heic</div><div class="fr"><i class="fi d"></i>Archive</div></div>
+      </div>
+      <div style="text-align:right;margin-top:10px"><span class="pill light sm" data-i="u_copy"></span></div>
+    </div><p class="note" data-i="illus"></p></div></div>
+  </div>
+</section>
+
+<section class="g">
+  <div class="inner row rev reveal">
+    <div class="txt"><h2 data-i="f2T"></h2><p class="lead" data-i="f2D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <div class="seg"><i class="on">▦</i><i>☰</i><i>⫴</i><i>▭</i></div>
+      <div class="grid"><div></div><div class="s"></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+    </div><p class="note" data-i="illus"></p></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="inner row reveal">
+    <div class="txt"><h2 data-i="f3T"></h2><p class="lead" data-i="f3D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <div class="pv"></div>
+      <div class="kv"><span data-i="u_kind"></span><b data-i="u_png"></b></div>
+      <div class="kv"><span data-i="u_dim"></span><b>3024 × 1964</b></div>
+      <div class="kv"><span data-i="u_size"></span><b>4.2 MB</b></div>
+      <div class="kv"><span data-i="u_tags"></span><b><i class="td" style="background:#ef4444"></i><i class="td" style="background:#3b82f6"></i></b></div>
+    </div><p class="note" data-i="illus"></p></div></div>
+  </div>
+</section>
+
+<section class="g">
+  <div class="inner row rev reveal">
+    <div class="txt"><h2 data-i="f4T"></h2><p class="lead" data-i="f4D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <div class="h"><span>🔍 invoice</span><span class="tag" data-i="u_scope"></span></div>
+      <div class="it"><i class="dot ok"></i><em>invoice-2026-09.pdf<small>~/Documents/Finance</small></em></div>
+      <div class="it"><i class="dot ok"></i><em>invoice-template.docx<small>~/Desktop</small></em></div>
+      <div class="it"><i class="dot ok"></i><em>invoices.numbers<small>~/Library/Mobile Documents</small></em></div>
+    </div><p class="note" data-i="illus"></p></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="inner row reveal">
+    <div class="txt"><h2 data-i="f5T"></h2><p class="lead" data-i="f5D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <div class="h"><span data-i="u_space"></span><span class="tag">128 GB</span></div>
+      <div class="it"><em>Movies</em><div class="bar" style="width:45%"><i style="width:100%"></i></div><small style="width:40px;text-align:right">42%</small></div>
+      <div class="it"><em>Library</em><div class="bar" style="width:45%"><i style="width:55%"></i></div><small style="width:40px;text-align:right">23%</small></div>
+      <div class="it"><em>Downloads</em><div class="bar" style="width:45%"><i style="width:30%"></i></div><small style="width:40px;text-align:right">13%</small></div>
+    </div><p class="note" data-i="illus"></p></div></div>
+  </div>
+</section>
+
+<section class="g">
+  <div class="inner row rev reveal">
+    <div class="txt"><h2 data-i="f6T"></h2><p class="lead" data-i="f6D"></p></div>
+    <div class="media"><div style="width:100%"><div class="ui">
+      <table class="cmp">
+        <tr><th></th><th data-i="u_fb"></th><th>Finder</th></tr>
+        <tr><td data-i="u_icpu"></td><td><b>0%</b></td><td>0.6–0.9%</td></tr>
+        <tr><td data-i="u_imem"></td><td><b>63 MB</b></td><td>181 MB*</td></tr>
+        <tr><td data-i="u_wake"></td><td><b>0</b></td><td>~1000</td></tr>
+        <tr><td data-i="u_load"></td><td colspan="2"><b data-i="u_loadv"></b></td></tr>
+      </table>
+      <p class="note" data-i="u_star"></p>
+    </div></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="inner list reveal">
+    <div><h2 data-i="safeT"></h2><p class="lead" data-i="safeD"></p></div>
+    <ul>
+      <li><span class="ic">🗑</span><div><b data-i="s1"></b><p data-i="s1d"></p></div></li>
+      <li><span class="ic">↩︎</span><div><b data-i="s2"></b><p data-i="s2d"></p></div></li>
+      <li><span class="ic">🔑</span><div><b data-i="s3"></b><p data-i="s3d"></p></div></li>
+      <li><span class="ic">⌥</span><div><b data-i="s4"></b><p data-i="s4d"></p></div></li>
+    </ul>
+  </div>
+</section>
+
+<section class="g">
+  <div class="inner center reveal">
+    <h2 data-i="insT"></h2>
+    <ol class="steps">
+      <li data-i="i1"></li>
+      <li data-i="i2"></li>
+      <li><span data-i="i3"></span><br><code>xattr -dr com.apple.quarantine "/Applications/文件管家.app"</code></li>
+    </ol>
+  </div>
+</section>
+
+<section class="final center">
+  <div class="reveal">
+    <h2 data-i="endT"></h2>
+    <p class="lead" data-i="endD"></p>
+    <a class="pill blue" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dlfree"></a>
+  </div>
+</section>
+
+<footer>
+  <span>© 2026 <a href="https://github.com/yostyang">@yostyang</a></span>
+  <nav><a href="https://github.com/yostyang/file-butler">GitHub</a><a href="https://github.com/yostyang/file-butler/releases" data-i="rel"></a><a href="https://yostyang.github.io/mac-optimizer/" data-i="sib"></a></nav>
+  <span data-i="made"></span>
+</footer>
+<script>
+const T={
+zh:{name:"文件管家",dl:"下载",dlfree:"免费下载",more:"了解更多",
+h1a:"比访达更顺手，",h1b:"轻松管理",h1c:"",rot:["文件","标签页","照片","下载","整台 Mac"],
+sub:"双栏、标签页、四种显示方式、实时预览、标签和空间分析，访达的常用功能一个不少，占用却更低。",
+meta:"macOS 13 及以上 · Apple 芯片与 Intel 通用 · 约 3 MB · 开源免费",
+whyT:"为什么做这个",
+why1:"访达够用，但整理大量文件时总差一点：没有双栏，来回拖文件要开两个窗口；想知道哪个文件夹最占空间，还得另装工具。",
+why2:"想要 Path Finder 那样的效率，又不想多一个吃资源的大软件。",
+why3:"于是做了文件管家：原生 Swift 编写，访达的功能都在，再加上双栏、预览栏和空间分析，而且安静地待在后台时几乎不占资源。",
+illus:"示意图，非真实截图",
+f1T:"双栏 + 标签页，整理文件快一倍",f1D:"左右两栏各自浏览，每栏都能开多个标签页。按 Tab 切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。",
+u_home:"个人",u_dl:"下载",u_copy:"拷贝到另一栏  F5",
+f2T:"图标、列表、分栏、画廊，随你切换",f2D:"⌘1 到 ⌘4 一键切换，每个标签页单独记住。还能按种类、日期、大小或标签分组，排序方式随时调整。",
+f3T:"预览栏：不打开也能看清内容",f3D:"⇧⌘P 打开右侧预览栏，图片、PDF、视频、文本代码、Office 文档都能直接预览，下面列出尺寸、时长、大小和标签。空格键还能快速查看。",
+u_kind:"种类",u_png:"PNG 图像",u_dim:"尺寸",u_size:"大小",u_tags:"标签",
+f4T:"搜索与标签，马上找到要的文件",f4D:"⌘F 输入就即时过滤当前文件夹，也能切换到「包括子文件夹」或「整台 Mac」用 Spotlight 搜索。访达标签一样能看、能改，侧边栏点一下就列出带这个标签的所有文件。",
+u_scope:"整台 Mac",
+f5T:"空间分析：看看空间都去哪了",f5D:"一键统计当前文件夹的空间占用，用环形图和排行列表展示，可以一层层点进去，看到大文件直接在里面定位或移到废纸篓。",
+u_space:"空间分析",
+f6T:"轻量，比访达占用更低",f6D:"在同一台 Mac 上实测：空闲时 CPU 0%、没有后台唤醒、内存约 63 MB。读取一个有 1 万个文件的文件夹约 0.27 秒。",
+u_fb:"文件管家",u_icpu:"空闲 CPU",u_imem:"内存",u_wake:"空闲唤醒",u_load:"读取 1 万个文件",u_loadv:"约 0.27 秒（v0.2 约 1.5 秒）",
+u_star:"* 实测于同一台 Mac。访达的数字包含它负责的桌面和系统工作，仅供参考。",
+safeT:"放心交给它",safeD:"文件操作都很保守，出错也能挽回。",
+s1:"绝不直接删除",s1d:"删除一律移到废纸篓，不会永久删除。",s2:"操作都能撤销",s2d:"重命名、移动、拷贝、新建、移到废纸篓都可以用 ⌘Z 撤销。",s3:"不要管理员密码",s3d:"不装后台常驻服务，也不改系统文件。",s4:"完全开源",s4d:"所有代码都在 GitHub 上，还自带自检和测速命令。",
+insT:"安装",i1:"到下载页下载最新的 File-Butler-x.x.dmg。",i2:"打开 DMG，把「文件管家」拖进「应用程序」。",i3:"应用没有经过苹果公证。第一次打开请在「应用程序」里右键 › 打开，或到 系统设置 › 隐私与安全性 点「仍要打开」。也可以在终端运行：",
+endT:"给文件一个更好用的家",endD:"免费、开源，约 3 MB。",rel:"版本记录",sib:"Mac 一键优化",made:"vibe coded with ♥"},
+en:{name:"File Butler",dl:"Download",dlfree:"Download for free",more:"Learn more",
+h1a:"Smoother than Finder.",h1b:"Take charge of your",h1c:"",rot:["files","tabs","photos","downloads","whole Mac"],
+sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, with a lighter footprint.",
+meta:"macOS 13+ · Apple silicon & Intel · About 3 MB · Free & open source",
+whyT:"Why I built this",
+why1:"Finder does the job, but organizing lots of files always feels one step short: no dual panes, so moving files means juggling two windows, and finding what eats your disk needs yet another app.",
+why2:"I wanted Path Finder's speed without another heavyweight app.",
+why3:"So I built File Butler: native Swift, with everything Finder does plus dual panes, a preview panel and space analysis, and it uses almost nothing while it sits idle.",
+illus:"Illustration, not a real screenshot",
+f1T:"Dual panes and tabs, twice as fast",f1D:"Browse two folders side by side, each with its own tabs. Press Tab to switch, F5 to copy and F6 to move to the other pane, or just drag between panes and to or from Finder.",
+u_home:"Home",u_dl:"Downloads",u_copy:"Copy to other pane  F5",
+f2T:"Icon, list, column or gallery",f2D:"Switch with ⌘1 to ⌘4, remembered per tab. Group by kind, date, size or tag, and change the sort order any time.",
+f3T:"Preview panel: see it without opening it",f3D:"Press ⇧⌘P for a live preview of images, PDFs, videos, text and code, and Office documents, with dimensions, duration, size and tags below. Space opens Quick Look.",
+u_kind:"Kind",u_png:"PNG image",u_dim:"Dimensions",u_size:"Size",u_tags:"Tags",
+f4T:"Search and tags that find things fast",f4D:"Press ⌘F and type to filter the current folder instantly, or search subfolders or the whole Mac with Spotlight. Finder tags show up and can be edited, and one click in the sidebar lists every file with a tag.",
+u_scope:"Whole Mac",
+f5T:"Space analysis: see where your disk went",f5D:"Measure a folder in one click, shown as a ring chart and a ranked list. Drill down level by level, then reveal big files or move them to the Trash right there.",
+u_space:"Space analysis",
+f6T:"Lightweight, lighter than Finder",f6D:"Measured on the same Mac: 0% CPU at idle, no background wakeups, about 63 MB of memory. A folder with 10,000 files loads in about 0.27 s.",
+u_fb:"File Butler",u_icpu:"Idle CPU",u_imem:"Memory",u_wake:"Idle wakeups",u_load:"Load 10,000 files",u_loadv:"≈ 0.27 s (v0.2: ≈ 1.5 s)",
+u_star:"* Measured on the same Mac. Finder's figure includes the desktop and system work it handles, so treat it as a rough reference.",
+safeT:"Safe by design",safeD:"File operations are conservative, and mistakes can be undone.",
+s1:"Never deletes outright",s1d:"Deleting always moves items to the Trash, never permanently.",s2:"Everything can be undone",s2d:"Rename, move, copy, new folder and Move to Trash all undo with ⌘Z.",s3:"No admin password",s3d:"No background daemons, no changes to system files.",s4:"Fully open source",s4d:"All the code is on GitHub, with built-in self-test and benchmark commands.",
+insT:"Install",i1:"Download the latest File-Butler-x.x.dmg from the Releases page.",i2:"Open the DMG and drag 文件管家 (File Butler) into Applications.",i3:"The app isn't notarized by Apple. The first time, right-click it in Applications and choose Open, or go to System Settings › Privacy & Security and click “Open Anyway”. Or run this in Terminal:",
+endT:"Give your files a better home",endD:"Free, open source, about 3 MB.",rel:"Releases",sib:"Mac Optimizer",made:"vibe coded with ♥"}};
+let lang=localStorage.getItem("lang")||(navigator.language.startsWith("zh")?"zh":"en"),ri=0,timer;
+function apply(l){lang=l;localStorage.setItem("lang",l);const d=T[l];
+ document.documentElement.lang=l=="zh"?"zh-CN":"en";document.title=l=="zh"?"文件管家 · 轻量的 macOS 双栏文件管理器":"File Butler · A lightweight dual-pane file manager for macOS";
+ document.querySelectorAll("[data-i]").forEach(e=>{const v=d[e.dataset.i];if(v!==undefined)e.textContent=v});
+ document.querySelectorAll(".lang button").forEach(b=>b.classList.toggle("on",b.dataset.l==l));
+ ri=0;spin();clearInterval(timer);timer=setInterval(spin,1800)}
+function spin(){const w=T[lang].rot,el=document.querySelector("#rot");el.innerHTML="<span>"+w[ri%w.length]+"</span>";ri++}
+document.querySelectorAll(".lang button").forEach(b=>b.onclick=()=>apply(b.dataset.l));
+apply(lang);
+const hd=document.getElementById("hd"),more=document.getElementById("more");
+addEventListener("scroll",()=>{hd.classList.toggle("scrolled",scrollY>40);more.classList.toggle("hide",scrollY>innerHeight*.6||innerHeight+scrollY>document.body.scrollHeight-300)});
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("on");io.unobserve(e.target)}}),{threshold:.15});
+document.querySelectorAll(".reveal").forEach(e=>io.observe(e));
+</script>
+</body>
+</html>
