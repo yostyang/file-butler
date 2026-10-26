@@ -21,6 +21,8 @@ struct ContentView: View {
         }
         .navigationTitle(app.activeTab.title)
         .sheet(isPresented: $app.showFDA) { FDASheet() }
+        .sheet(isPresented: $app.showViewOptions) { ViewOptionsSheet().environmentObject(app) }
+        .onAppear { RightClick.install() }
         .sheet(item: $app.renameReq, onDismiss: { app.focusActiveTable() }) { r in RenameSheet(url: r.url).environmentObject(app) }
         .sheet(item: $app.sizeReq, onDismiss: { app.focusActiveTable() }) { r in SizeAnalysisView(rootURL: r.url).environmentObject(app) }
         .alert(app.alert?.title ?? "", isPresented: Binding(get: { app.alert != nil }, set: { if !$0 { app.alert = nil } })) {

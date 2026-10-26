@@ -44,22 +44,23 @@ func openWithEntries(_ urls: [URL], app: AppState) -> [MEntry] {
 
 func sym(_ s: String) -> NSImage? { NSImage(systemSymbolName: s, accessibilityDescription: nil) }
 
-func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL]) -> [MEntry] {
+func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL], bgDir: URL? = nil) -> [MEntry] {
     var m: [MEntry] = []
     let other = app.panes[1 - pane].tab.path
     if urls.isEmpty {
-        let dir = tab.path
-        m.append(.item("新建文件夹", nil, false, true) { app.active = pane; app.newFolder() })
-        m.append(.sep)
-        m.append(.item("显示简介", nil, false, true) { app.active = pane; tab.selection = []; app.showPreview = true })
+        let dir = bgDir ?? tab.path
         let n = pasteboardFileCount()
-        if n > 0 { m.append(.sep); m.append(.item(n == 1 ? "粘贴项目" : "粘贴 \(n) 个项目", nil, false, true) { app.paste(into: dir) }) }
+        m.append(.item("新建文件夹", nil, false, !tab.isGlobalSearch) { app.active = pane; app.newFolder(in: dir) })
+        m.append(.item(n > 1 ? "粘贴 \(n) 个项目" : "粘贴项目", nil, false, n > 0 && !tab.isGlobalSearch) { app.active = pane; app.paste(into: dir) })
         m.append(.sep)
-        m.append(.item("使用分组", nil, tab.groupKey != .none, true) { tab.groupKey = tab.groupKey == .none ? .kind : .none })
-        m.append(.sub("分组方式", GroupKey.allCases.filter { $0 != .none }.map { g in .item(g.title, nil, tab.groupKey == g, true) { tab.groupKey = g } }))
+        m.append(.item("显示简介", nil, false, true) { app.active = pane; tab.selection = dir.standardizedFileURL.path == tab.path.standardizedFileURL.path ? [] : [dir]; app.showPreview = true })
+        m.append(.sep)
+        m.append(.sub("显示", ViewMode.allCases.map { v in .item(v.title, nil, tab.viewMode == v, true) { app.active = pane; app.setViewMode(v) } }))
+        m.append(.item("使用群组", nil, tab.groupKey != .none, true) { tab.groupKey = tab.groupKey == .none ? .kind : .none })
+        if tab.groupKey != .none { m.append(.sub("群组方式", GroupKey.allCases.filter { $0 != .none }.map { g in .item(g.title, nil, tab.groupKey == g, true) { tab.groupKey = g } })) }
         m.append(.sub("排序方式", SortKey.allCases.map { k in .item(k.title, nil, tab.sortKey == k, true) { tab.setSort(k, asc: tab.asc) } }
                       + [.sep, .item("升序", nil, tab.asc, true) { tab.setSort(tab.sortKey, asc: true) }, .item("降序", nil, !tab.asc, true) { tab.setSort(tab.sortKey, asc: false) }]))
-        m.append(.sub("显示方式", ViewMode.allCases.map { v in .item(v.title, nil, tab.viewMode == v, true) { app.active = pane; app.setViewMode(v) } }))
+        m.append(.item("查看显示选项", nil, false, true) { app.showViewOptions = true })
         m.append(.sep)
         m.append(.sub("文件管家", [
             .item("在访达中显示", nil, false, true) { NSWorkspace.shared.activateFileViewerSelecting([dir]) },
@@ -211,6 +212,52 @@ struct InlineNameField: NSViewRepresentable {
             guard !done, let tf = n.object as? NSTextField else { return }
             done = true; let name = tf.stringValue
             app.inlineRename = nil; app.rename(url, to: name); app.focusActiveTable()
+        }
+    }
+}
+
+/// 右键时间戳：只有真正的右键（或 ⌃点按）才会让 SwiftUI 菜单先选中被点的项目，和访达一致。
+enum RightClick {
+    static var last: Date = .distantPast
+    static var monitor: Any?
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { e in
+            if e.type == .rightMouseDown || e.modifierFlags.contains(.control) { last = Date() }
+            return e
+        }
+    }
+    static var recent: Bool { Date().timeIntervalSince(last) < 0.6 }
+}
+/// 构建项目菜单时，如果被右键的项目没选中，先把它选中（异步，避免在视图更新中改状态）。
+func itemMenuURLs(_ tab: TabModel, _ it: FileItem) -> [URL] {
+    if tab.selection.contains(it.url) { return tab.selectedURLs }
+    if RightClick.recent { DispatchQueue.main.async { if !tab.selection.contains(it.url) { tab.selection = [it.url]; tab.anchor = it.url } } }
+    return [it.url]
+}
+
+struct ViewOptionsSheet: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) var dismiss
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("显示选项").font(.headline)
+            HStack { Text("图标大小"); Slider(value: $app.iconSize, in: 32...256, step: 8); Text("\(Int(app.iconSize))").monospacedDigit().frame(width: 34) }
+            Toggle("显示预览栏", isOn: $app.showPreview)
+            Toggle("显示隐藏文件", isOn: $app.showHidden)
+            HStack { Spacer(); Button("完成") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }.padding(20).frame(width: 360)
+    }
+}
+
+func specTitles(_ es: [MEntry]) -> [String] {
+    es.map { e in
+        switch e {
+        case .item(let t, _, _, let en, _): return en ? t : "(\(t))"
+        case .sep: return "—"
+        case .sub(let t, _): return t + "▸"
+        case .share: return "共享…"
+        case .tagRow: return "标签"
         }
     }
 }

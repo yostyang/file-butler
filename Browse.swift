@@ -123,6 +123,10 @@ struct IconGrid: View {
                             }
                         }
                     }.padding(12)
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { tab.selection = []; app.focusPane(index) }
+                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
                 }
                 .onChange(of: tab.anchor) { a in if let a = a { withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(a) } } }
             }
@@ -154,7 +158,7 @@ struct IconGrid: View {
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
         .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: order); app.focusPane(index) })
-        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
+        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
         .onDrag { NSItemProvider(object: it.url as NSURL) }
         .modifier(FolderDrop(app: app, item: it))
         .help(it.name)
@@ -192,11 +196,12 @@ struct ColumnBrowser: View {
         let it = makeItem(u); return it.isFolderLike ? nil : it
     }
     var body: some View {
+        GeometryReader { geo in
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     ForEach(Array(columns.enumerated()), id: \.offset) { i, dir in
-                        column(i, dir).frame(width: 230).id("col\(i)")
+                        column(i, dir, height: geo.size.height).frame(width: 230).id("col\(i)")
                         Divider()
                     }
                     if let p = previewItem {
@@ -207,16 +212,28 @@ struct ColumnBrowser: View {
                             Text("修改于 \(fmtDate(p.modified))").font(.caption).foregroundStyle(.secondary)
                         }.padding(12).frame(width: 320).id("preview")
                     }
+                    // 最后一栏右侧的空白：右键作用于最深的那个文件夹
+                    Color.clear.frame(minWidth: 40, maxWidth: .infinity, minHeight: geo.size.height)
+                        .contentShape(Rectangle())
+                        .onTapGesture { app.focusPane(index); deselect(in: columns.count - 1) }
+                        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: [], bgDir: columns.last), app: app) }
                 }
+                .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
             }
             .onChange(of: tab.columnChain) { _ in withAnimation { proxy.scrollTo(previewItem != nil ? "preview" : "col\(columns.count - 1)", anchor: .trailing) } }
             .onChange(of: tab.selection) { _ in if previewItem != nil { withAnimation { proxy.scrollTo("preview", anchor: .trailing) } } }
+        }
         }
         .background(KeyCatcher(app: app, pane: index))
         .onAppear { for c in tab.columnChain { loader.load(c, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) } }
         .onChange(of: tab.version) { _ in for c in tab.columnChain { loader.load(c, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) } }
     }
-    func column(_ i: Int, _ dir: URL) -> some View {
+    /// 点按某一栏的空白：取消选中这一栏里的项目（访达行为），保留左边栏的路径。
+    func deselect(in i: Int) {
+        tab.columnChain = Array(tab.columnChain.prefix(i))
+        tab.selection = []
+    }
+    func column(_ i: Int, _ dir: URL, height: CGFloat) -> some View {
         let items = i == 0 ? tab.items : (loader.lists[dir.path] ?? [])
         let chosen: URL? = i < tab.columnChain.count ? tab.columnChain[i] : nil
         return ScrollView {
@@ -239,11 +256,15 @@ struct ColumnBrowser: View {
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                     .simultaneousGesture(TapGesture().onEnded { select(it, at: i, items: items) })
-                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
+                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
                     .onDrag { NSItemProvider(object: it.url as NSURL) }
                     .modifier(FolderDrop(app: app, item: it))
                 }
             }.padding(4)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .top)
+            .contentShape(Rectangle())
+            .onTapGesture { app.focusPane(index); deselect(in: i) }
+            .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: [], bgDir: dir), app: app) }
         }
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: dir) }
@@ -290,7 +311,7 @@ struct GalleryView: View {
                                 .contentShape(Rectangle())
                                 .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                                 .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: tab.display.map { $0.url }); app.focusPane(index) })
-                                .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: contextURLs(tab, it)), app: app) }
+                                .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
                                 .onDrag { NSItemProvider(object: it.url as NSURL) }
                                 .modifier(FolderDrop(app: app, item: it))
                                 .help(it.name).id(it.url)
@@ -302,6 +323,8 @@ struct GalleryView: View {
             .frame(height: 96)
         }
         .background(KeyCatcher(app: app, pane: index))
+        .contentShape(Rectangle())
+        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
         .onAppear { if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }
         .onChange(of: tab.version) { _ in if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }

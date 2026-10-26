@@ -527,6 +527,7 @@ final class AppState: ObservableObject {
     @Published var showFDA = false
     @Published var inlineRename: URL?
     @Published var tagPopoverTick = 0
+    @Published var showViewOptions = false
     let responders = [WeakView(), WeakView()]
     var controllers: [PaneController] = []
     var undoStack: [UndoOp] = []
@@ -701,9 +702,9 @@ final class AppState: ObservableObject {
         if !r.errs.isEmpty { showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
     }
     /// 访达行为：在当前显示的文件夹（分栏视图里是最右侧的文件夹）新建「未命名文件夹」，选中并直接进入就地重命名。
-    func newFolder() {
+    func newFolder(in target: URL? = nil) {
         let tab = activeTab
-        let dir = (tab.viewMode == .column && !tab.isGlobalSearch ? tab.columnChain.last : nil) ?? tab.path
+        let dir = target ?? (tab.viewMode == .column && !tab.isGlobalSearch ? tab.columnChain.last : nil) ?? tab.path
         do {
             let u = try FileOps.newFolder(in: dir).standardizedFileURL
             undoStack.append(.created([u]))

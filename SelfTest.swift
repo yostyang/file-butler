@@ -124,6 +124,17 @@ enum SelfTest {
             check("就地重命名选中范围（不含扩展名）", baseNameRange("报告.final.pdf", isDir: false).length == ("报告.final" as NSString).length && baseNameRange("未命名文件夹", isDir: true).length == 6)
         } catch { check("访达同款新建文件夹", false, error.localizedDescription) }
 
+        // 空文件夹的背景右键菜单（访达顺序）
+        do {
+            let empty = b.appendingPathComponent("空的"); try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+            let app = AppState(); let tab = app.panes[0].tab
+            tab.navigate(empty)
+            let t = specTitles(contextSpec(app: app, tab: tab, pane: 0, urls: [], bgDir: empty))
+            let t0 = t.map { $0.contains("粘贴") ? "粘贴项目" : $0 }
+            let want = ["新建文件夹", "粘贴项目", "—", "显示简介", "—", "显示▸", "使用群组", "排序方式▸", "查看显示选项", "—", "文件管家▸"]
+            check("空文件夹背景菜单与访达一致", t0 == want, t.joined(separator: " "))
+        } catch { check("背景菜单", false, error.localizedDescription) }
+
         // grouping and filtering logic
         let items = ((try? fm.contentsOfDirectory(at: a, includingPropertiesForKeys: listKeys)) ?? []).map(makeItem)
         let gk = groupItems(items, by: .kind)
