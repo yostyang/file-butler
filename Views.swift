@@ -378,7 +378,7 @@ struct StatusContent: View {
                 Slider(value: $app.iconSize, in: 32...256).frame(width: 110).controlSize(.mini)
                 Image(systemName: "photo").font(.system(size: 13))
             }
-            if let f = freeSpace(tab.path) { Text("可用空间 \(fmtBytes(f))") }
+            if let f = tab.freeBytes { Text("可用空间 \(fmtBytes(f))") }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24)
     }

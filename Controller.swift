@@ -24,7 +24,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
 
     func visualOrder() -> [URL] {
         let t = tab
-        if t.viewMode == .icon && !t.isGlobalSearch { return groupItems(t.display, by: t.groupKey).flatMap { $0.1 }.map { $0.url } }
+        if t.viewMode == .icon && !t.isGlobalSearch { return t.groupedOrder }
         return t.display.map { $0.url }
     }
     func openSelection() {

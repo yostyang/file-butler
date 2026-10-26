@@ -6,32 +6,66 @@ import UniformTypeIdentifiers
 import CoreServices
 
 // MARK: thumbnails
+/// 有上限的图标 / 缩略图缓存，内存吃紧时自动清空。
 final class ThumbCache {
-    static let images = NSCache<NSString, NSImage>()
-    static let icons = NSCache<NSString, NSImage>()
+    static let images: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 48 << 20; c.countLimit = 800; return c }()
+    static let icons: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.countLimit = 1500; return c }()
+    static let typeIcons: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.countLimit = 400; return c }()
+    static let pressure: DispatchSourceMemoryPressure = {
+        let s = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        s.setEventHandler { ThumbCache.purge() }
+        s.resume(); return s
+    }()
+    static func start() { _ = pressure }
+    /// 每个文件单独的图标（文件夹、App 可能有自定义图标）
     static func icon(_ u: URL) -> NSImage {
         if let i = icons.object(forKey: u.path as NSString) { return i }
         let i = NSWorkspace.shared.icon(forFile: u.path); icons.setObject(i, forKey: u.path as NSString); return i
     }
+    /// 普通文件按扩展名共用一个图标，不再为每个文件单独取图标
+    static func listIcon(_ it: FileItem) -> NSImage {
+        if it.isDir { return icon(it.url) }
+        let ext = it.url.pathExtension.lowercased() as NSString
+        if let i = typeIcons.object(forKey: ext) { return i }
+        let t = UTType(filenameExtension: ext as String) ?? .data
+        let i = NSWorkspace.shared.icon(for: t); typeIcons.setObject(i, forKey: ext); return i
+    }
+    @discardableResult
+    static func requestThumb(_ u: URL, bucket: Int, done: @escaping (NSImage?) -> Void) -> QLThumbnailGenerator.Request? {
+        let key = "\(u.path)|\(bucket)" as NSString
+        if let c = images.object(forKey: key) { done(c); return nil }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let req = QLThumbnailGenerator.Request(fileAt: u, size: CGSize(width: bucket, height: bucket), scale: scale, representationTypes: .thumbnail)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
+            guard let cg = rep?.cgImage else { done(nil); return }
+            let i = NSImage(cgImage: cg, size: NSSize(width: CGFloat(cg.width) / scale, height: CGFloat(cg.height) / scale))
+            images.setObject(i, forKey: key, cost: cg.bytesPerRow * cg.height)
+            done(i)
+        }
+        return req
+    }
+    static func purgeImages() { images.removeAllObjects() }
+    static func purge() { images.removeAllObjects(); icons.removeAllObjects(); typeIcons.removeAllObjects() }
 }
 struct ThumbView: View {
-    let url: URL; let size: CGFloat
+    let item: FileItem; let size: CGFloat
     @State var img: NSImage?
+    @State var req: QLThumbnailGenerator.Request?
     var bucket: Int { size <= 64 ? 64 : size <= 128 ? 128 : 256 }
     var body: some View {
-        Image(nsImage: img ?? ThumbCache.icon(url)).resizable().aspectRatio(contentMode: .fit)
-            .task(id: "\(url.path)|\(bucket)") { load() }
+        Image(nsImage: img ?? ThumbCache.listIcon(item)).resizable().aspectRatio(contentMode: .fit)
+            .task(id: "\(item.url.path)|\(bucket)|\(item.modified?.timeIntervalSince1970 ?? 0)") { load() }
+            .onDisappear { if let r = req { QLThumbnailGenerator.shared.cancel(r) }; req = nil }   // 滚出屏幕就取消生成
     }
     func load() {
-        let key = "\(url.path)|\(bucket)" as NSString
-        if let c = ThumbCache.images.object(forKey: key) { img = c; return }
+        if let r = req { QLThumbnailGenerator.shared.cancel(r); req = nil }
         img = nil
-        let req = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: bucket, height: bucket), scale: NSScreen.main?.backingScaleFactor ?? 2, representationTypes: .thumbnail)
-        let u = url
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
-            guard let i = rep?.nsImage else { return }
-            ThumbCache.images.setObject(i, forKey: key)
-            DispatchQueue.main.async { if u == url { img = i } }
+        guard !item.isFolderLike else { return }   // 文件夹直接用图标，不生成缩略图
+        let u = item.url
+        req = ThumbCache.requestThumb(u, bucket: bucket) { i in
+            guard let i = i else { return }
+            if Thread.isMainThread { if u == item.url { img = i } }
+            else { DispatchQueue.main.async { if u == item.url { img = i; req = nil } } }
         }
     }
 }
@@ -112,8 +146,8 @@ struct IconGrid: View {
     let index: Int
     var body: some View {
         let size = CGFloat(app.iconSize)
-        let groups = groupItems(tab.display, by: tab.groupKey)
-        let order = groups.flatMap { $0.1 }.map { $0.url }
+        let groups = tab.groups
+        let order = tab.groupedOrder
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView {
@@ -145,7 +179,7 @@ struct IconGrid: View {
     func cell(_ it: FileItem, size: CGFloat, order: [URL]) -> some View {
         let sel = tab.selection.contains(it.url)
         return VStack(spacing: 4) {
-            ThumbView(url: it.url, size: size).frame(width: size, height: size).padding(4)
+            ThumbView(item: it, size: size).frame(width: size, height: size).padding(4)
                 .background(RoundedRectangle(cornerRadius: 8).fill(sel ? Color.primary.opacity(0.12) : .clear))
             HStack(spacing: 3) {
                 if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
@@ -181,8 +215,7 @@ final class ColumnLoader: ObservableObject {
     @Published var lists: [String: [FileItem]] = [:]
     func load(_ u: URL, hidden: Bool, sortKey: SortKey, asc: Bool) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let urls = (try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: listKeys, options: hidden ? [] : [.skipsHiddenFiles])) ?? []
-            let items = sortItems(urls.map(makeItem), key: sortKey, asc: asc)
+            let items = sortItems(loadDirectory(u, hidden: hidden).items, key: sortKey, asc: asc)
             DispatchQueue.main.async { self.lists[u.path] = items }
         }
     }
@@ -231,7 +264,7 @@ struct ColumnBrowser: View {
                     let sel = tab.selection.contains(it.url) || chosen == it.url
                     let strong = tab.selection.contains(it.url)
                     HStack(spacing: 6) {
-                        Image(nsImage: ThumbCache.icon(it.url)).resizable().frame(width: 16, height: 16)
+                        Image(nsImage: ThumbCache.listIcon(it)).resizable().frame(width: 16, height: 16)
                         Text(it.name).lineLimit(1).truncationMode(.middle).font(.system(size: 12))
                         Spacer(minLength: 2)
                         if !it.tags.isEmpty { TagDotsView(tags: it.tags) }
@@ -287,7 +320,7 @@ struct GalleryView: View {
                     LazyHStack(spacing: 6) {
                         ForEach(tab.display, id: \.url) { it in
                             let sel = tab.selection.contains(it.url)
-                            ThumbView(url: it.url, size: 64).frame(width: 64, height: 64).padding(5)
+                            ThumbView(item: it, size: 64).frame(width: 64, height: 64).padding(5)
                                 .background(RoundedRectangle(cornerRadius: 8).fill(sel ? accentA.opacity(0.25) : .clear))
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(sel ? accentA : .clear, lineWidth: 2))
                                 .overlay(alignment: .bottomTrailing) { if !it.tags.isEmpty { TagDotsView(tags: it.tags).padding(3) } }

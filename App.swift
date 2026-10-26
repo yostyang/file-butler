@@ -9,7 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct FileButlerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject var app = AppState()
-    init() { if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run()) } }
+    init() {
+        let args = CommandLine.arguments
+        if args.contains("--selftest") { exit(SelfTest.run()) }
+        if let i = args.firstIndex(of: "--bench") { exit(Bench.run(URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "/tmp/fb-perf"))) }
+        ThumbCache.start()
+    }
     var body: some Scene {
         Window("文件管家", id: "main") {
             ContentView().environmentObject(app).frame(minWidth: 900, minHeight: 520)

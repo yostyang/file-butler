@@ -72,7 +72,6 @@ struct FileTable: NSViewRepresentable {
         let app: AppState; var tab: TabModel; var pane: Int
         var rows: [Row] = []; var lastVersion = -1; var suppress = false
         weak var table: FBTableView?
-        static let iconCache = NSCache<NSString, NSImage>()
         var ctrl: PaneController { app.controllers[pane] }
 
         init(app: AppState, tab: TabModel, pane: Int) { self.app = app; self.tab = tab; self.pane = pane }
@@ -88,7 +87,7 @@ struct FileTable: NSViewRepresentable {
             if lastVersion != tab.version {
                 lastVersion = tab.version
                 if tab.groupKey == .none || tab.isGlobalSearch { rows = tab.display.map { .item($0) } }
-                else { rows = groupItems(tab.display, by: tab.groupKey).flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
+                else { rows = tab.groups.flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
                 tv.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("path"))?.isHidden = !tab.isGlobalSearch
                 suppress = true
                 let d = NSSortDescriptor(key: tab.sortKey.rawValue, ascending: tab.asc)
@@ -148,7 +147,7 @@ struct FileTable: NSViewRepresentable {
             switch id {
             case "name":
                 cell?.textField?.stringValue = it.name
-                cell?.imageView?.image = icon(for: it.url)
+                cell?.imageView?.image = ThumbCache.listIcon(it)
                 (cell as? NameCell)?.tagField.attributedStringValue = tagDots(it.tags)
             case "date": cell?.textField?.stringValue = fmtDate(it.modified)
             case "size": cell?.textField?.stringValue = it.isFolderLike ? "--" : fmtBytes(it.size)
@@ -157,11 +156,6 @@ struct FileTable: NSViewRepresentable {
             }
             cell?.alphaValue = it.hidden ? 0.5 : 1
             return cell
-        }
-        func icon(for u: URL) -> NSImage {
-            if let i = Coordinator.iconCache.object(forKey: u.path as NSString) { return i }
-            let i = NSWorkspace.shared.icon(forFile: u.path); i.size = NSSize(width: 16, height: 16)
-            Coordinator.iconCache.setObject(i, forKey: u.path as NSString); return i
         }
         func tableView(_ tv: NSTableView, typeSelectStringFor col: NSTableColumn?, row: Int) -> String? {
             col?.identifier.rawValue == "name" ? item(row)?.name : nil
