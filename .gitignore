@@ -1,0 +1,6 @@
+build/
+FileButler
+fb_arm
+fb_x86
+*.iconset
+.DS_Store
