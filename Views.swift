@@ -40,6 +40,7 @@ struct ContentView: View {
             Button { app.dual.toggle() } label: { Label("双栏", systemImage: app.dual ? "rectangle.split.2x1.fill" : "rectangle") }.help("单栏/双栏 ⌥⌘U")
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            Button { app.newFolder() } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }.help("新建文件夹 ⇧⌘N")
             ShareButton(tab: app.activeTab)
             TagButton(tab: app.activeTab)
             MoreMenu(tab: app.activeTab, pane: app.active)
