@@ -264,7 +264,7 @@ struct TabContent: View {
     let index: Int
     var body: some View {
         VStack(spacing: 0) {
-            PathBar(tab: tab, index: index)
+            if app.showPathBar || app.editingPane == index { PathBar(tab: tab, index: index) }
             if tab.searchActive { SearchScopeBar(tab: tab) }
             Divider()
             ZStack {
@@ -330,7 +330,7 @@ struct PathBar: View {
     @State var text = ""
     @FocusState var focused: Bool
     var components: [URL] {
-        var list: [URL] = []; var u = tab.path
+        var list: [URL] = []; var u = tab.pathTarget
         while true { list.insert(u, at: 0); let p = u.deletingLastPathComponent(); if p.path == u.path || list.count > 60 { break }; u = p }
         return list
     }
@@ -344,27 +344,41 @@ struct PathBar: View {
                     .onAppear { text = ""; DispatchQueue.main.async { focused = true } }
                 Button("取消") { app.editingPane = nil; app.focusActiveTable() }.buttonStyle(.borderless).font(.caption)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 2) {
-                            ForEach(Array(components.enumerated()), id: \.offset) { i, u in
-                                if i > 0 { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary) }
-                                Button { app.active = index; tab.navigate(u) } label: {
-                                    HStack(spacing: 4) {
-                                        Image(nsImage: safeFolderIcon(u)).resizable().frame(width: 14, height: 14)
-                                        Text(u.path == "/" ? "Macintosh HD" : FileManager.default.displayName(atPath: u.path)).font(.system(size: 12)).lineLimit(1)
-                                    }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
-                                }.buttonStyle(.plain).id(i)
-                            }
-                        }
-                    }.onAppear { proxy.scrollTo(components.count - 1) }.onChange(of: tab.path) { _ in proxy.scrollTo(components.count - 1) }
+                let comps = components
+                HStack(spacing: 2) {
+                    ForEach(Array(comps.enumerated()), id: \.offset) { i, u in
+                        if i > 0 { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary).layoutPriority(3) }
+                        Button { segmentClicked(u, isLast: i == comps.count - 1) } label: {
+                            HStack(spacing: 4) {
+                                Image(nsImage: i == comps.count - 1 && u != tab.path ? ThumbCache.listIcon(makeItem(u)) : safeFolderIcon(u)).resizable().frame(width: 14, height: 14)
+                                Text(u.path == "/" ? "Macintosh HD" : FileManager.default.displayName(atPath: u.path)).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                            }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        .layoutPriority(i == 0 || i == comps.count - 1 ? 2 : 0)
+                        .help(u.path)
+                    }
                 }
+                .help(tab.pathTarget.path)
                 Spacer(minLength: 0)
                 Button { app.active = index; app.editingPane = index } label: { Image(systemName: "character.cursor.ibeam") }.buttonStyle(.borderless).help("输入路径 ⌘L / ⇧⌘G")
             }
         }
         .padding(.horizontal, 8).frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+    func segmentClicked(_ u: URL, isLast: Bool) {
+        app.active = index
+        let base = tab.path.standardizedFileURL.path, p = u.standardizedFileURL.path
+        if tab.viewMode == .column && !tab.isGlobalSearch && p.hasPrefix(base + (base == "/" ? "" : "/")) && p != base {
+            // 在分栏里退回到这一层：保留到它为止的栏
+            if isLast { return }
+            if let k = tab.columnChain.firstIndex(where: { $0.standardizedFileURL.path == p }) { tab.columnChain = Array(tab.columnChain.prefix(k + 1)); tab.selection = []; return }
+        }
+        if isLast && u != tab.path {
+            let it = makeItem(u)
+            if !it.isFolderLike { return }
+        }
+        tab.navigate(u)
     }
 }
 

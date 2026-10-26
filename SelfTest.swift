@@ -132,6 +132,12 @@ enum SelfTest {
             let t = specTitles(contextSpec(app: app, tab: tab, pane: 0, urls: [], bgDir: empty))
             let t0 = t.map { $0.contains("粘贴") ? "粘贴项目" : $0 }
             let want = ["新建文件夹", "粘贴项目", "—", "显示简介", "—", "显示▸", "使用群组", "排序方式▸", "查看显示选项", "—", "文件管家▸"]
+            let f1 = empty.appendingPathComponent("sub"); try? FileManager.default.createDirectory(at: f1, withIntermediateDirectories: true)
+            tab.viewMode = .column; tab.columnChain = [f1]; tab.selection = []
+            let pt1 = tab.pathTarget, ti = tab.title
+            tab.selection = [f1]
+            check("路径栏跟随分栏选中项", pt1.lastPathComponent == "sub" && ti == "sub" && tab.pathTarget.lastPathComponent == "sub")
+            tab.columnChain = []; tab.selection = []; tab.viewMode = .list
             check("空文件夹背景菜单与访达一致", t0 == want, t.joined(separator: " "))
         } catch { check("背景菜单", false, error.localizedDescription) }
 

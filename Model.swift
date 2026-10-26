@@ -335,7 +335,14 @@ final class TabModel: ObservableObject, Identifiable {
 
     var title: String {
         if let t = tagFilter { return "标签：\(t)" }
-        return path.path == "/" ? "/" : FileManager.default.displayName(atPath: path.path)
+        let p = viewMode == .column ? (columnChain.last ?? path) : path
+        return p.path == "/" ? "/" : FileManager.default.displayName(atPath: p.path)
+    }
+    /// 路径栏显示的目标（访达行为）：分栏视图里是最深的选中项；其他视图是当前文件夹 + 单个选中项。
+    var pathTarget: URL {
+        if tagFilter == nil, selection.count == 1, let s = selection.first { return s }
+        if viewMode == .column, let c = columnChain.last { return c }
+        return path
     }
     var isGlobalSearch: Bool { tagFilter != nil || (!searchText.isEmpty && searchScope != .folder) }
     var searchActive: Bool { tagFilter != nil || !searchText.isEmpty }
@@ -528,6 +535,8 @@ final class AppState: ObservableObject {
     @Published var inlineRename: URL?
     @Published var tagPopoverTick = 0
     @Published var showViewOptions = false
+    @Published var showPathBar = UserDefaults.standard.object(forKey: "showPathBar") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showPathBar, forKey: "showPathBar") } }
     let responders = [WeakView(), WeakView()]
     var controllers: [PaneController] = []
     var undoStack: [UndoOp] = []

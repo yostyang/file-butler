@@ -72,6 +72,7 @@ struct FileButlerApp: App {
                 Divider()
                 Button("搜索") { app.searchFocus += 1 }.keyboardShortcut("f")
                 Button(app.showPreview ? "隐藏预览" : "显示预览") { app.showPreview.toggle() }.keyboardShortcut("p", modifiers: [.command, .shift])
+                Button(app.showPathBar ? "隐藏路径栏" : "显示路径栏") { app.showPathBar.toggle() }.keyboardShortcut("p", modifiers: [.command, .option])
                 Divider()
                 Button(app.dual ? "切换为单栏" : "切换为双栏") { app.dual.toggle() }.keyboardShortcut("u", modifiers: [.command, .option])
                 Button(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件") { app.showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
