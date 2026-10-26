@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// `FileButler --selftest`: exercises the file operations in /tmp/fb-test only, prints PASS/FAIL, exits.
@@ -147,6 +148,19 @@ enum SelfTest {
             tab.columnChain = []; tab.selection = []; tab.viewMode = .list
             check("空文件夹背景菜单与访达一致", t0 == want, t.joined(separator: " "))
         } catch { check("背景菜单", false, error.localizedDescription) }
+
+        // 快速操作：向左旋转图片（原文件进废纸篓，可找回）
+        do {
+            let img = b.appendingPathComponent("旋转.png")
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 20, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            try rep.representation(using: .png, properties: [:])!.write(to: img)
+            _ = try QuickActions.rotateImageLeft(img)
+            if let t = QuickActions.lastTrashed { trashLeftovers.append(t) }
+            let r2 = NSBitmapImageRep(data: try Data(contentsOf: img))
+            check("向左旋转图片（40×20 → 20×40）", r2?.pixelsWide == 20 && r2?.pixelsHigh == 40, "\(r2?.pixelsWide ?? 0)×\(r2?.pixelsHigh ?? 0)")
+            check("访达式日期格式", finderDate(Date(timeIntervalSince1970: 1760597820)).hasPrefix("2025年10月16日 星期四"), finderDate(Date(timeIntervalSince1970: 1760597820)))
+            check("持续时间格式 02:24", finderDuration(144) == "02:24")
+        } catch { check("向左旋转图片", false, error.localizedDescription) }
 
         // grouping and filtering logic
         let items = ((try? fm.contentsOfDirectory(at: a, includingPropertiesForKeys: listKeys)) ?? []).map(makeItem)

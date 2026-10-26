@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// 自动化测试环境：--uitest <输出目录> / --snapshot <输出目录> / --compare <基准目录> <输出目录>
 /// 测试在应用进程内驱动自己的界面（合成 NSEvent、走真实的响应链和菜单快捷键），
@@ -64,12 +65,38 @@ enum TestEnv {
         dir(deep)
         for i in 1...12 { deep += "/第\(i)层 名字非常非常长的文件夹 Level \(i)"; dir(deep) }
         file(deep + "/最深处的文件.txt", "deep")
+        makeTestVideo(fixture.appendingPathComponent("视频.mp4"))
         // 固定修改时间，让截图稳定
         if let e = fm.enumerator(at: fixture, includingPropertiesForKeys: nil) {
             for case let u as URL in e { try? fm.setAttributes([.modificationDate: fixed, .creationDate: fixed], ofItemAtPath: u.path) }
         }
         try? fm.setAttributes([.modificationDate: fixed], ofItemAtPath: fixture.path)
     }
+}
+
+/// 用 AVFoundation 生成一段 1 秒、320×180 的测试视频（渐变色块，无声）
+func makeTestVideo(_ u: URL) {
+    try? FileManager.default.removeItem(at: u)
+    guard let w = try? AVAssetWriter(outputURL: u, fileType: .mp4) else { return }
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180])
+    let ad = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 180])
+    w.add(input); w.startWriting(); w.startSession(atSourceTime: .zero)
+    for i in 0..<30 {
+        while !input.isReadyForMoreMediaData { usleep(1000) }
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32ARGB, nil, &pb)
+        guard let b = pb else { continue }
+        CVPixelBufferLockBaseAddress(b, [])
+        let ctx = CGContext(data: CVPixelBufferGetBaseAddress(b), width: 320, height: 180, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(b), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)!
+        ctx.setFillColor(CGColor(red: 0.2, green: 0.45, blue: 0.85, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        ctx.setFillColor(CGColor(red: 1, green: 0.8, blue: 0.2, alpha: 1)); ctx.fill(CGRect(x: 20 + i * 8, y: 60, width: 60, height: 60))
+        CVPixelBufferUnlockBaseAddress(b, [])
+        ad.append(b, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+    }
+    input.markAsFinished()
+    let sem = DispatchSemaphore(value: 0)
+    w.finishWriting { sem.signal() }
+    sem.wait()
 }
 
 // MARK: 图片对比（基准图 vs 本次截图）
@@ -218,6 +245,7 @@ final class UITestRunner {
         guard let w = NSApp.windows.first(where: { $0.contentView != nil && $0.frame.width > 600 }) else { print("FAIL  找不到主窗口"); finish(); return }
         win = w
         TestWindow.win = w
+        NSApp.appearance = NSAppearance(named: .aqua)
         win.appearance = NSAppearance(named: .aqua)
         win.alphaValue = 0
         win.setFrame(NSRect(x: -6000, y: -6000, width: 1280, height: 780), display: true)
@@ -295,7 +323,8 @@ final class UITestRunner {
         for (i, m) in ViewMode.allCases.enumerated() {
             press("\(i + 1)", [18, 19, 20, 21][i], .command); await settle(0.8)
             let r = paneRect(0)
-            let p = NSPoint(x: r.maxX - 40, y: r.minY + 20)
+            // 画廊底部是缩略图条，空白处取上方大图区域的角落
+            let p = m == .gallery ? NSPoint(x: r.minX + 8, y: r.maxY - 8) : NSPoint(x: r.maxX - 40, y: r.minY + 20)
             let titles = await rightClickMenu(p)
             check("\(m.title)视图空白处右键 → 背景菜单", bgOK(titles), titles.joined(separator: " | "))
         }
@@ -379,8 +408,8 @@ final class UITestRunner {
         }
         // 6b. 图标/分栏视图：右键未选中的项目会先选中它
         for (key, code, name) in [("1", UInt16(18), "图标"), ("3", UInt16(20), "分栏")] {
-            press(key, code, .command); await settle(0.8)
-            t.selection = []; t.columnChain = []; await settle(0.5)
+            press(key, code, .command); await settle(1.0)
+            t.selection = []; t.columnChain = []; await settle(1.2)   // 等图标布局稳定（缩略图异步加载）
             let rr = paneRect(0)
             let p = name == "图标" ? NSPoint(x: rr.minX + 12 + 58, y: rr.maxY - 12 - 50) : NSPoint(x: rr.minX + 80, y: rr.maxY - 4 - 11)
             let titles = await rightClickMenu(p)
@@ -415,6 +444,27 @@ final class UITestRunner {
         let hidden = !app.showPathBar
         press("p", 35, [.command, .option]); await settle(0.4)
         check("⌥⌘P 显示/隐藏路径栏", hidden && app.showPathBar)
+        // 9b. 视频预览：默认不播放，点按播放按钮才播放；换选中项就停止
+        press("2", 19, .command); await settle(0.5)
+        t.clearSearch(); app.showPreview = true
+        let created0 = MediaPreviewState.created
+        t.selection = [F.appendingPathComponent("视频.mp4")]; app.focusActiveTable(); await settle(2.0)
+        check("视频预览：选中后不自动播放（没有创建播放器）", MediaPreviewState.created == created0 && MediaPreviewState.player == nil, "created=\(MediaPreviewState.created - created0)")
+        check("视频预览：显示播放按钮", PlayButtonRegistry.marker?.window === win)
+        let pr = paneRect(app.dual ? 1 : 0)
+        let full = win.contentView!.superview!
+        let crop = NSRect(x: pr.maxX + 1, y: 30, width: full.bounds.width - pr.maxX - 1, height: full.bounds.height - 70)
+        shot("video-preview", crop: crop)
+        if let mk = PlayButtonRegistry.marker {
+            let c = mk.convert(NSPoint(x: mk.bounds.midX, y: mk.bounds.midY), to: nil)
+            click(c); await settle(1.0)
+            check("视频预览：点按播放按钮后开始播放", MediaPreviewState.created == created0 + 1 && (MediaPreviewState.player?.rate ?? 0) > 0, "rate=\(MediaPreviewState.player?.rate ?? -1)")
+            shot("ui-video-playing")
+        }
+        let playing = MediaPreviewState.player
+        t.selection = [F.appendingPathComponent("说明.txt")]; await settle(1.0)
+        check("视频预览：换选中项后停止并释放播放器", (playing?.rate ?? 0) == 0 && playing?.currentItem == nil, "rate=\(playing?.rate ?? -1)")
+        app.showPreview = false; await settle(0.4)
         // 10. 右栏的路径栏是右栏自己的路径
         app.dual = true; await settle(0.6)
         let p1 = pathText(1)

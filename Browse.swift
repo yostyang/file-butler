@@ -4,6 +4,8 @@ import Quartz
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 import CoreServices
+import AVFoundation
+import ImageIO
 
 // MARK: thumbnails
 /// 有上限的图标 / 缩略图缓存，内存吃紧时自动清空。
@@ -212,7 +214,7 @@ struct ColumnBrowser: View {
                     }
                     if let p = previewItem {
                         VStack(spacing: 8) {
-                            QLView(url: p.url).frame(minHeight: 220)
+                            PreviewSurface(url: p.url).frame(minHeight: 220)
                             Text(p.name).font(.headline).lineLimit(2).multilineTextAlignment(.center)
                             Text("\(p.kind) · \(fmtBytes(p.size))").font(.caption).foregroundStyle(.secondary)
                             Text("修改于 \(fmtDate(p.modified))").font(.caption).foregroundStyle(.secondary)
@@ -296,7 +298,7 @@ struct GalleryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 if let it = current {
-                    QLView(url: it.url).padding(12)
+                    PreviewSurface(url: it.url).padding(12)
                     Divider()
                     MetaView(item: it).frame(width: 240)
                 } else {
@@ -340,12 +342,31 @@ struct GalleryView: View {
 }
 
 // MARK: metadata
-struct MediaInfo { var dims: String?; var duration: String? }
+struct MediaInfo { var dims: String?; var duration: String?; var seconds: Double? }
 func mediaInfo(_ u: URL) -> MediaInfo {
+    var r = spotlightMediaInfo(u)
+    // Spotlight 没有索引到（新文件、/tmp 等）时直接读文件
+    if r.dims == nil, isImageFile(u), let s = CGImageSourceCreateWithURL(u as CFURL, nil),
+       let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any],
+       let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int { r.dims = "\(w) × \(h)" }
+    if isAVMedia(u), r.seconds == nil || (isVideo(u) && r.dims == nil) {
+        let a = AVURLAsset(url: u)
+        let s = CMTimeGetSeconds(a.duration)
+        if s.isFinite, s > 0 { r.seconds = s }
+        if let t = a.tracks(withMediaType: .video).first {
+            let sz = t.naturalSize.applying(t.preferredTransform)
+            r.dims = "\(Int(abs(sz.width))) × \(Int(abs(sz.height)))"
+        }
+    }
+    return r
+}
+func spotlightMediaInfo(_ u: URL) -> MediaInfo {
     guard let md = MDItemCreateWithURL(nil, u as CFURL) else { return MediaInfo() }
     var r = MediaInfo()
     if let w = MDItemCopyAttribute(md, kMDItemPixelWidth) as? NSNumber, let h = MDItemCopyAttribute(md, kMDItemPixelHeight) as? NSNumber { r.dims = "\(w.intValue) × \(h.intValue)" }
+    defer {}
     if let d = MDItemCopyAttribute(md, kMDItemDurationSeconds) as? NSNumber {
+        r.seconds = d.doubleValue
         let s = Int(d.doubleValue.rounded()); r.duration = s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
     return r
@@ -413,10 +434,10 @@ struct PreviewContent: View {
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 let item = sel.first ?? makeItem(tab.path)
-                QLView(url: item.url).frame(minHeight: 220, maxHeight: 360)
+                PreviewSurface(url: item.url).frame(minHeight: 220, maxHeight: 360).id(item.url)
                 Divider()
                 if sel.isEmpty { Text("当前文件夹").font(.caption).foregroundStyle(.secondary).padding(.top, 6) }
-                MetaView(item: item)
+                FinderInfoView(item: item, tab: tab).id(item.url)
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
