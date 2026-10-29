@@ -4,10 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件管家 · 比访达更顺手的 macOS 双栏文件管理器</title>
-<meta name="description" content="双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少，占用却更低。原生 Swift 编写，开源免费。">
-<meta name="theme-color" content="#07070a" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f6f6fa" media="(prefers-color-scheme: light)">
-<meta name="color-scheme" content="dark light">
+<meta name="description" content="双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少。原生 Swift 编写，开源免费。">
+<meta name="theme-color" content="#f6f6fa">
+<meta name="color-scheme" content="light">
 <meta property="og:title" content="文件管家 · 比访达更顺手的 macOS 双栏文件管理器">
 <meta property="og:description" content="双栏 + 标签页 + 实时预览 + 空间分析，轻量到空闲 0% CPU。开源免费。">
 <meta property="og:image" content="icon.png">
@@ -16,6 +15,7 @@
 <style>
 /* ============ tokens ============ */
 :root{
+  color-scheme:light;
   --bg:#07070a;
   --ink:#f4f4f8;
   --ink-2:#c9c9d6;
@@ -294,7 +294,7 @@ h1 .line{display:block}
 }
 
 /* ============ problem ============ */
-.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:56px}
+.cards3{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:56px}
 .pcard{
   position:relative;padding:30px 26px 32px;border-radius:20px;border:1px solid var(--line-2);
   background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
@@ -617,8 +617,8 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   .flow-chip{display:none}
 }
 
-/* ============ light theme (系统为浅色外观时) ============ */
-@media (prefers-color-scheme: light){
+/* ============ 浅色主题（始终使用） ============ */
+@media all{
   :root{
     --bg:#f6f6fa; --ink:#14141c; --ink-2:#3a3a4a; --mute:#5c5c70; --mute-2:#6a6a7e;
     --line:rgba(20,20,40,.12); --line-2:rgba(20,20,40,.07); --card:rgba(255,255,255,.7);
@@ -692,7 +692,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         <span class="line rise" style="--d:.12s" data-i="h1a">比访达更顺手，</span>
         <span class="line rise" style="--d:.2s"><span data-i="h1b">轻松管理</span> <span class="rot" id="rot"><span>文件</span></span></span>
       </h1>
-      <p class="sub rise" style="--d:.3s" data-i="sub">双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少，占用却更低。</p>
+      <p class="sub rise" style="--d:.3s" data-i="sub">双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少。</p>
       <div class="hero-cta rise" style="--d:.38s">
         <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
           免费下载
@@ -787,15 +787,10 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         <div class="pcard rv" style="--d:.13s">
           <span class="num"><em>02</em> / <span data-i="pb_c2n">多一个 App</span></span>
           <h3 data-i="pb_c2t">想看清磁盘，还得再装一个工具</h3>
-          <p data-i="pb_c2d">哪个文件夹最占空间？访达只会给你一个"关于本机"的粗略数字，想知道细节，得另找空间分析软件。</p>
-        </div>
-        <div class="pcard rv" style="--d:.21s">
-          <span class="num"><em>03</em> / <span data-i="pb_c3n">二选一</span></span>
-          <h3 data-i="pb_c3t">要么忍，要么背一个重软件</h3>
-          <p data-i="pb_c3d">Path Finder 那样的效率确实好用，但为了多一个双栏，就常驻一个吃内存、还在后台反复唤醒的大应用，不划算。</p>
+          <p data-i="pb_c2d">哪个文件夹最占空间？访达要一个个文件夹去看大小，想一眼看清分布，得另找空间分析软件。</p>
         </div>
       </div>
-      <p class="quote rv" style="--d:.1s" data-i="pb_q">想要 Path Finder 的效率，又不想多一个吃资源的大软件。<span data-i="pb_q2">于是有了文件管家。</span></p>
+      <p class="quote rv" style="--d:.1s" data-i="pb_q"><span data-i="pb_q2">于是有了文件管家。</span></p>
     </div>
   </section>
 
@@ -833,7 +828,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
       <div class="core">
         <div class="rv">
           <div class="eyebrow"><span class="dotp"></span><span data-i="co_eb">核心功能</span></div>
-          <h2 data-i="co_h2">双栏 + 标签页，<br>整理文件快一倍</h2>
+          <h2 data-i="co_h2">双栏 + 标签页，<br>整理文件更顺手</h2>
           <p class="lead" data-i="co_p">左右两栏各自浏览，每栏都能开多个标签页。按 Tab 切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。</p>
           <div class="steps">
             <div class="step"><span class="n">1</span><div><b data-i="co_s1t">开两栏</b><p data-i="co_s1d">左右并排，各有独立的路径和标签页，互不干扰。</p></div></div>
@@ -1150,7 +1145,7 @@ var EN = {
   nav_why:"Why", nav_core:"Core", nav_fn:"Features", nav_safe:"Safety", nav_dl:"Download",
   badge_b:"Open source · Free", badge_a:"about 4 MB download",
   h1a:"Smoother than Finder.", h1b:"Take charge of your",
-  sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, with a lighter footprint.",
+  sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, and more.",
   cta1:'Download for free<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   cta2:"See what it does",
   meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> About 4 MB download <i>·</i> Free &amp; open source",
@@ -1165,14 +1160,12 @@ var EN = {
   pb_eb:"The problem",
   pb_h2:"Finder is fine — until you have a lot of files",
   pb_p:"Finder does what it has to. But the moment you have thousands of files to put in order, that \"one step short\" gets amplified — every single move costs you another window switch.",
-  pb_c1n:"One pane short", pb_c2n:"One app short", pb_c3n:"A trade-off",
+  pb_c1n:"One pane short", pb_c2n:"One app short",
   pb_c1t:"No dual panes, so you juggle windows",
   pb_c1d:"Moving a file from A to B means opening two Finder windows, dragging across, then switching back. With a lot of files, just finding the right window is the annoying part.",
   pb_c2t:"Seeing your disk needs another app",
-  pb_c2d:"Which folder is eating the space? Finder gives you a rough number in About This Mac, and nothing more. For detail you need a separate space-analysis app.",
-  pb_c3t:"Either put up with it, or carry a heavyweight",
-  pb_c3d:"The speed of Path Finder is genuinely good — but paying for one extra pane with a big app that sits in memory and wakes up in the background all day isn't a good trade.",
-  pb_q:'I wanted Path Finder\'s speed without another heavyweight app.<span>So I built File Butler.</span>',
+  pb_c2d:"Which folder is eating the space? In Finder you check folder sizes one at a time. To see the whole picture at a glance you need a separate space-analysis app.",
+  pb_q:'<span>So I built File Butler.</span>',
   vs_ot:"Finder + a pile of tools",
   vs_oh:"It gets done — with a detour at every step",
   vs_o1:"Dragging files means two windows and constant switching",
@@ -1186,7 +1179,7 @@ var EN = {
   vs_n3:"⌘1–⌘4 switches views instantly, remembered per tab",
   vs_n4:"Rename, move and trash all undo with ⌘Z",
   co_eb:"The core",
-  co_h2:"Dual panes and tabs.<br>Twice as fast.",
+  co_h2:"Dual panes and tabs.<br>Tidying made easy.",
   co_p:"Browse two folders side by side, each with its own tabs. Press Tab to switch, F5 to copy and F6 to move to the other pane, or just drag between panes and to or from Finder.",
   co_s1t:"Open two panes", co_s1d:"Side by side, each with its own path and tabs. They stay out of each other's way.",
   co_s2t:"Select", co_s2d:"Click or use the arrow keys, multi-select included. Tab moves focus between panes.",
