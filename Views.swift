@@ -229,7 +229,7 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain).fontWeight(isCur ? .semibold : .regular)
         .foregroundStyle(isCur ? AnyShapeStyle(accentA) : AnyShapeStyle(.primary)).help(u.path)
-        .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: u) }
+        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: u))
     }
 }
 
@@ -488,7 +488,7 @@ struct PathSegmentsView: View {
                                 .resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
                             Text(s.label).font(.system(size: 12)).lineLimit(1).fixedSize()
                         }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
-                    }.buttonStyle(.plain).help(s.url.path).onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: s.url) }
+                    }.buttonStyle(.plain).help(s.url.path).onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: s.url))
                 }
             }
         }

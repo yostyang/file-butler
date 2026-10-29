@@ -234,7 +234,7 @@ enum FileOps {
         guard !n.isEmpty else { throw FBError("名称不能为空。") }
         if n.contains("/") || n.contains(":") { throw FBError("名称不能包含“/”或“:”。") }
         let dst = u.deletingLastPathComponent().appendingPathComponent(n)
-        if fm.fileExists(atPath: dst.path) && dst.path.lowercased() != u.path.lowercased() { throw FBError("已经存在名为「\(n)」的项目。") }
+        if fm.fileExists(atPath: dst.path) && dst.path.lowercased() != u.path.lowercased() { throw FBError("名称“\(n)”已被使用。请选取一个不同的名称。") }
         try fm.moveItem(at: u, to: dst)
         return dst
     }
@@ -805,19 +805,26 @@ final class AppState: ObservableObject {
         if progress === p { lastOpMs = Date().timeIntervalSince(opStart) * 1000; progress = nil; progressTimer?.invalidate(); progressTimer = nil; busyText = nil }
     }
     func cancelOp() { progress?.cancel() }
-    /// 访达样式的同名冲突对话框（在后台线程调用，同步等主线程的选择）
-    func askConflict(_ name: String, move: Bool) -> (Conflict, Bool) {
+    /// 访达的同名冲突对话框（文字、按钮顺序与访达一致：保留两者 | 停止 | 替换；多个冲突时才有「应用到全部」）
+    static func conflictAlert(name: String, move: Bool, multi: Bool) -> NSAlert {
+        let a = NSAlert()
+        a.messageText = "此位置已经存在名称为“\(name)”的项目。"
+        a.informativeText = "你要使用正在\(move ? "移动" : "拷贝")的项目进行替换吗？"
+        a.addButton(withTitle: "替换")                       // 最右、默认按钮
+        a.addButton(withTitle: "停止").keyEquivalent = "\u{1b}"   // Esc = 停止
+        a.addButton(withTitle: "保留两者")
+        if multi { a.showsSuppressionButton = true; a.suppressionButton?.title = "应用到全部" }
+        return a
+    }
+    /// 在后台线程调用，同步等主线程的选择
+    func askConflict(_ name: String, move: Bool, multi: Bool = false) -> (Conflict, Bool) {
         if let o = AppState.conflictOverride { return o }
         if TestEnv.active { return (.keepBoth, false) }   // 测试时绝不弹出对话框
         var out: (Conflict, Bool) = (.stop, false)
         DispatchQueue.main.sync {
-            let a = NSAlert()
-            a.messageText = "此位置已存在名称为“\(name)”的项目。"
-            a.informativeText = "要用正在\(move ? "移动" : "拷贝")的项目替换它吗？"
-            a.addButton(withTitle: "替换"); a.addButton(withTitle: "停止"); a.addButton(withTitle: "保留两者")
-            a.showsSuppressionButton = true; a.suppressionButton?.title = "全部应用"
+            let a = AppState.conflictAlert(name: name, move: move, multi: multi)
             let r = a.runModal()
-            let all = a.suppressionButton?.state == .on
+            let all = multi && a.suppressionButton?.state == .on
             switch r {
             case .alertFirstButtonReturn: out = (.replace, all)
             case .alertThirdButtonReturn: out = (.keepBoth, all)
@@ -856,7 +863,7 @@ final class AppState: ObservableObject {
         let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count)
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
         opQueue.async {
-            let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv) ?? (.stop, false) })
+            let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv, multi: p.conflictsLeft > 1) ?? (.stop, false) })
             DispatchQueue.main.async {
                 self.endOp(p); resetDisplayNames()
                 var ops: [UndoOp] = []

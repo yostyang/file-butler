@@ -143,7 +143,7 @@ struct IconGrid: View {
         .background(KeyCatcher(app: app, pane: index))
         .contentShape(Rectangle())
         .onTapGesture { tab.selection = []; app.focusPane(index) }
-        .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
+        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: tab.path))
     }
     func cell(_ it: FileItem, size: CGFloat, order: [URL]) -> some View {
         let sel = tab.selection.contains(it.url)
@@ -169,12 +169,33 @@ struct IconGrid: View {
         .help(it.name)
     }
 }
+/// SwiftUI 视图（分栏、画廊、侧边栏、路径栏）的放下目标：光标显示的操作（移动 / 拷贝 +）与实际执行的一致，规则同访达
+struct FinderDrop: DropDelegate {
+    let app: AppState, dir: URL
+    var targeted: Binding<Bool>? = nil
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) }
+    func dropEntered(info: DropInfo) { targeted?.wrappedValue = true }
+    func dropExited(info: DropInfo) { targeted?.wrappedValue = false }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let urls = fileURLs(NSPasteboard(name: .drag))
+        switch urls.isEmpty ? (DragMods.current.contains(.option) ? .copy : .move) : planDrop(urls, to: dir) {
+        case .move: return DropProposal(operation: .move)
+        case .copy: return DropProposal(operation: .copy)
+        case .alias: return DropProposal(operation: .copy)   // SwiftUI 没有「替身」光标，用 + 号
+        case .none: return DropProposal(operation: .forbidden)
+        }
+    }
+    func performDrop(info: DropInfo) -> Bool {
+        targeted?.wrappedValue = false
+        return app.dropProviders(info.itemProviders(for: [.fileURL]), to: dir)
+    }
+}
 struct FolderDrop: ViewModifier {
     let app: AppState, item: FileItem
     @State var targeted = false
     func body(content: Content) -> some View {
         if item.isFolderLike {
-            content.onDrop(of: [.fileURL], isTargeted: $targeted) { app.dropProviders($0, to: item.url) }
+            content.onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: item.url, targeted: $targeted))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(accentA, lineWidth: targeted ? 2 : 0))
         } else { content }
     }
@@ -272,7 +293,7 @@ struct ColumnBrowser: View {
             .background(ItemMarkerView(url: dir, tab: tab, bg: true))
         }
         .contentShape(Rectangle())
-        .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: dir) }
+        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: dir))
     }
     func select(_ it: FileItem, at i: Int, items: [FileItem]) {
         app.focusPane(index)
@@ -329,7 +350,7 @@ struct GalleryView: View {
         }
         .background(KeyCatcher(app: app, pane: index))
         .contentShape(Rectangle())
-        .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
+        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: tab.path))
         .onAppear { if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }
         .onChange(of: tab.version) { _ in if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }
     }

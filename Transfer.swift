@@ -8,6 +8,9 @@ final class OpProgress {
     private let lock = NSLock()
     private var _done = 0, _total = 0, _cancelled = false
     var verb = "拷贝"
+    /// 本次操作还剩多少个同名冲突（决定冲突对话框是否显示「应用到全部」）
+    var conflictsLeft: Int { get { lock.lock(); defer { lock.unlock() }; return _conflicts } set { lock.lock(); _conflicts = newValue; lock.unlock() } }
+    private var _conflicts = 0
     var done: Int { lock.lock(); defer { lock.unlock() }; return _done }
     var total: Int { get { lock.lock(); defer { lock.unlock() }; return _total } set { lock.lock(); _total = newValue; lock.unlock() } }
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return _cancelled }
@@ -64,6 +67,12 @@ extension FileOps {
         func taken(_ u: URL) -> Bool { reserved.contains(u.path) || lexists(u.path) }
         func unique(_ name: String, copy: Bool) -> URL { uniqueURL(in: dir, name: name, copy: copy, taken: taken) }
         progress?.total = urls.count
+        // 先数一遍会冲突的项目（只用 lstat，很快）
+        if resolve != nil {
+            var n = 0
+            for raw in urls where raw.deletingLastPathComponent().standardizedFileURL.path != dir.path && lexists(dir.appendingPathComponent(raw.lastPathComponent).path) { n += 1 }
+            progress?.conflictsLeft = n
+        }
         var plan: [(src: URL, dst: URL, move: Bool)] = []
         plan.reserveCapacity(urls.count)
         loop: for raw in urls {
@@ -84,6 +93,7 @@ extension FileOps {
                 if let s = sticky { c = s }
                 else if let r = resolve { let (cc, all) = r(name, move); c = cc; if all { sticky = cc } }
                 else { c = .keepBoth }
+                if let p = progress { p.conflictsLeft = max(0, p.conflictsLeft - 1) }
                 switch c {
                 case .stop: res.cancelled = true; break loop
                 case .skip: progress?.step(); continue
