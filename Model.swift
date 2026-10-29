@@ -395,7 +395,8 @@ final class TabModel: ObservableObject, Identifiable {
     }
     func reload() {
         loadToken += 1; let tok = loadToken, p = path, hidden = app?.showHidden ?? false
-        loading = true
+        // 只有列表为空时才显示「加载中」（避免每次刷新都多一轮界面重绘）
+        if items.isEmpty && !loading { loading = true }
         let key = sortKey, ascending = asc
         DispatchQueue.global(qos: .userInitiated).async {
             let (res, err, denied) = loadDirectory(p, hidden: hidden)
@@ -403,12 +404,20 @@ final class TabModel: ObservableObject, Identifiable {
             let free = freeSpace(p)
             DispatchQueue.main.async { perfMark("reload main \(p.lastPathComponent) \(res.count)") {
                 guard tok == self.loadToken else { return }
-                self.error = err; self.permissionDenied = denied; self.freeBytes = free
-                self.items = key == self.sortKey && ascending == self.asc ? sorted : sortItems(res, key: self.sortKey, asc: self.asc)
+                if self.error != err { self.error = err }
+                if self.permissionDenied != denied { self.permissionDenied = denied }
+                self.freeBytes = free
+                let newItems = key == self.sortKey && ascending == self.asc ? sorted : sortItems(res, key: self.sortKey, asc: self.asc)
+                // 内容没变（例如目录监视的重复通知）：什么都不更新，界面不重绘
+                if newItems == self.items && self.cacheVersion >= 0 && !self.items.isEmpty {
+                    if self.loading { self.loading = false }
+                    self.watch(); return
+                }
+                self.items = newItems
                 let all = Set(res.map { $0.url }), dirPath = p.path
                 let keep = Set(self.selection.filter { all.contains($0) || $0.deletingLastPathComponent().path != dirPath })
                 if keep != self.selection { self.selection = keep }
-                self.loading = false
+                if self.loading { self.loading = false }
                 self.recompute()
                 self.app?.noteTags(res)
                 self.watch()
@@ -426,7 +435,12 @@ final class TabModel: ObservableObject, Identifiable {
     }
     private func scheduleReload() {
         if pending { return }; pending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.pending = false; self?.reload() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            // 后台文件操作进行中：先不刷新（操作结束时会统一刷新一次），避免批量操作时反复重载列表
+            if self.app?.progress != nil { self.pending = false; self.scheduleReload(); return }
+            self.pending = false; self.reload()
+        }
     }
 
     // MARK: search
