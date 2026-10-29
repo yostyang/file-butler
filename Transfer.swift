@@ -52,51 +52,89 @@ extension FileOps {
     }
 
     /// 访达规则：同一卷默认移动，跨卷默认拷贝；拷贝到原文件夹 = 「副本」；目标已有同名项目时询问（替换 / 保留两者 / 停止）
+    /// 分两步：先按顺序逐项规划目标位置（冲突询问、替换都在这一步，和访达一样按顺序问），
+    /// 再执行：同卷移动直接 rename(2)；拷贝用 clonefile/copyfile 4 路并行。
     static func transfer(_ urls: [URL], to rawDir: URL, mode: TransferMode, progress: OpProgress? = nil,
                          resolve: ((String, Bool) -> (Conflict, Bool))? = nil) -> TransferResult {
         let dir = rawDir.standardizedFileURL
         var res = TransferResult()
         var sticky: Conflict?
         var volCache: [String: Bool] = [:]
+        var reserved = Set<String>()          // 本批次已占用的目标名（避免两项落到同一个名字）
+        func taken(_ u: URL) -> Bool { reserved.contains(u.path) || lexists(u.path) }
+        func unique(_ name: String, copy: Bool) -> URL { uniqueURL(in: dir, name: name, copy: copy, taken: taken) }
         progress?.total = urls.count
+        var plan: [(src: URL, dst: URL, move: Bool)] = []
+        plan.reserveCapacity(urls.count)
         loop: for raw in urls {
             if progress?.isCancelled == true { res.cancelled = true; break }
-            defer { progress?.step() }
             let src = raw.standardizedFileURL, name = src.lastPathComponent
             let parent = src.deletingLastPathComponent().path
-            if dir.path == src.path || dir.path.hasPrefix(src.path + "/") { res.errs.append("不能把「\(name)」放进它自身或它的子文件夹。"); continue }
+            if dir.path == src.path || dir.path.hasPrefix(src.path + "/") { res.errs.append("不能把「\(name)」放进它自身或它的子文件夹。"); progress?.step(); continue }
             var move = mode == .move
             if mode == .auto {
                 if let v = volCache[parent] { move = v } else { move = sameVolume(src, dir); volCache[parent] = move }
             }
             let sameDir = parent == dir.path
-            if move && sameDir { continue }
+            if move && sameDir { progress?.step(); continue }
             var dst = dir.appendingPathComponent(name)
-            if !move && sameDir { dst = uniqueURL(in: dir, name: name, copy: true) }
-            else if fm.fileExists(atPath: dst.path) || (try? dst.checkResourceIsReachable()) == true || isSymlink(dst) {
+            if !move && sameDir { dst = unique(name, copy: true) }
+            else if taken(dst) {
                 let c: Conflict
                 if let s = sticky { c = s }
                 else if let r = resolve { let (cc, all) = r(name, move); c = cc; if all { sticky = cc } }
                 else { c = .keepBoth }
                 switch c {
                 case .stop: res.cancelled = true; break loop
-                case .skip: continue
-                case .keepBoth: dst = uniqueURL(in: dir, name: name, copy: false)
+                case .skip: progress?.step(); continue
+                case .keepBoth: dst = unique(name, copy: false)
                 case .replace:
-                    do { var out: NSURL?; try fm.trashItem(at: dst, resultingItemURL: &out); if let o = out as URL? { res.replaced.append((dst, o)) } }
-                    catch { res.errs.append("「\(name)」：无法替换已有项目（\(error.localizedDescription)）"); continue }
+                    if reserved.contains(dst.path) { dst = unique(name, copy: false) }   // 和本批次另一项同名：保留两者
+                    else {
+                        do { var out: NSURL?; try fm.trashItem(at: dst, resultingItemURL: &out); if let o = out as URL? { res.replaced.append((dst, o)) } }
+                        catch { res.errs.append("「\(name)」：无法替换已有项目（\(error.localizedDescription)）"); progress?.step(); continue }
+                    }
                 }
             }
-            do {
-                if move { try fm.moveItem(at: src, to: dst); res.moved.append((src, dst)) }
-                else { try copyItem(src, to: dst, progress: progress); res.copied.append(dst) }
-            } catch {
-                if progress?.isCancelled == true { res.cancelled = true; break }
-                res.errs.append("「\(name)」：\(error.localizedDescription)")
+            reserved.insert(dst.path)
+            plan.append((src, dst, move))
+        }
+        // 执行：移动（同卷 rename，失败或跨卷时交给 FileManager）
+        let moves = plan.filter { $0.move }, copies = plan.filter { !$0.move }
+        for m in moves {
+            if progress?.isCancelled == true { res.cancelled = true; break }
+            defer { progress?.step() }
+            if renamex_np(m.src.path, m.dst.path, UInt32(RENAME_EXCL)) == 0 { res.moved.append((m.src, m.dst)); continue }
+            do { try fm.moveItem(at: m.src, to: m.dst); res.moved.append((m.src, m.dst)) }
+            catch { res.errs.append("「\(m.src.lastPathComponent)」：\(error.localizedDescription)") }
+        }
+        // 执行：拷贝（4 路并行；结果按原顺序汇总）
+        if !copies.isEmpty && !res.cancelled {
+            var out = [String?](repeating: nil, count: copies.count)   // nil = 成功，否则为错误信息
+            var ran = [Bool](repeating: false, count: copies.count)
+            let lock = NSLock(); var next = 0
+            let workers = min(4, copies.count)
+            out.withUnsafeMutableBufferPointer { ob in ran.withUnsafeMutableBufferPointer { rb in
+                let o = ob, r = rb
+                DispatchQueue.concurrentPerform(iterations: workers) { _ in
+                    while true {
+                        lock.lock(); let i = next; next += 1; lock.unlock()
+                        if i >= copies.count || progress?.isCancelled == true { return }
+                        let c = copies[i]
+                        do { try copyItem(c.src, to: c.dst, progress: progress) } catch { o[i] = "「\(c.src.lastPathComponent)」：\(error.localizedDescription)" }
+                        r[i] = true
+                        progress?.step()
+                    }
+                }
+            } }
+            for (i, c) in copies.enumerated() where ran[i] {
+                if let e = out[i] { if progress?.isCancelled != true { res.errs.append(e) } } else { res.copied.append(c.dst) }
             }
+            if progress?.isCancelled == true { res.cancelled = true }
         }
         return res
     }
+    static func lexists(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 }
     static func isSymlink(_ u: URL) -> Bool { (try? fm.destinationOfSymbolicLink(atPath: u.path)) != nil }
 
     /// 访达的 ⌥⌘ 拖放：在目标文件夹里制作替身（名称和原项目相同，重名时自动编号）

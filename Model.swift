@@ -136,17 +136,18 @@ func sameVolume(_ a: URL, _ b: URL) -> Bool {
     return x.isEqual(y)
 }
 func uniqueCopyURL(in dir: URL, name: String) -> URL { uniqueURL(in: dir, name: name, copy: true) }
-func uniqueURL(in dir: URL, name: String, copy: Bool) -> URL {
+func uniqueURL(in dir: URL, name: String, copy: Bool, taken: ((URL) -> Bool)? = nil) -> URL {
     let fm = FileManager.default
+    let isTaken: (URL) -> Bool = taken ?? { fm.fileExists(atPath: $0.path) }
     var u = dir.appendingPathComponent(name)
-    if !fm.fileExists(atPath: u.path) { return u }
+    if !isTaken(u) { return u }
     var ext = (name as NSString).pathExtension, base = (name as NSString).deletingPathExtension
     if name.hasSuffix(".zip") && !copy { ext = "zip"; base = String(name.dropLast(4)) }
     var i = copy ? 1 : 2
     while true {
         let b = copy ? (i == 1 ? "\(base) 副本" : "\(base) 副本 \(i)") : "\(base) \(i)"
         u = dir.appendingPathComponent(ext.isEmpty ? b : "\(b).\(ext)")
-        if !fm.fileExists(atPath: u.path) { return u }
+        if !isTaken(u) { return u }
         i += 1
     }
 }
@@ -164,17 +165,32 @@ indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL
 // MARK: - Pure file operations (also used by --selftest)
 enum FileOps {
     static let fm = FileManager.default
+    /// 移到废纸篓：用系统的 trashItem（可「放回原处」、同名自动改名）。
+    /// 按文件名分 4 路并行：同名的项目总在同一路里依次处理，不会在废纸篓里抢同一个名字。
     static func trash(_ urls: [URL], progress: OpProgress? = nil) -> (done: [(URL, URL)], errs: [String], perm: Bool) {
-        var done: [(URL, URL)] = [], errs: [String] = [], perm = false
         progress?.total = urls.count
-        for u in urls {
-            if progress?.isCancelled == true { break }
-            defer { progress?.step() }
-            do {
-                var out: NSURL?
-                try fm.trashItem(at: u, resultingItemURL: &out)
-                if let o = out as URL? { done.append((u, o)) }
-            } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)"); perm = perm || isPermissionError(error) }
+        let lanes = min(4, max(1, urls.count))
+        var buckets = [[Int]](repeating: [], count: lanes)
+        for (i, u) in urls.enumerated() { buckets[abs(u.lastPathComponent.lowercased().hashValue) % lanes].append(i) }
+        var out = [(URL?, String?, Bool)](repeating: (nil, nil, false), count: urls.count)
+        out.withUnsafeMutableBufferPointer { ob in
+            let o = ob
+            DispatchQueue.concurrentPerform(iterations: lanes) { k in
+                for i in buckets[k] {
+                    if progress?.isCancelled == true { return }
+                    defer { progress?.step() }
+                    do {
+                        var res: NSURL?
+                        try fm.trashItem(at: urls[i], resultingItemURL: &res)
+                        o[i] = (res as URL?, nil, false)
+                    } catch { o[i] = (nil, "「\(urls[i].lastPathComponent)」：\(error.localizedDescription)", isPermissionError(error)) }
+                }
+            }
+        }
+        var done: [(URL, URL)] = [], errs: [String] = [], perm = false
+        for (i, r) in out.enumerated() {
+            if let t = r.0 { done.append((urls[i], t)) }
+            if let e = r.1 { errs.append(e); perm = perm || r.2 }
         }
         return (done, errs, perm)
     }
@@ -768,11 +784,14 @@ final class AppState: ObservableObject {
     // MARK: 后台操作队列：所有耗时的文件操作都在这里串行执行，主线程只更新界面
     let opQueue = DispatchQueue(label: "filebutler.ops", qos: .userInitiated)
     var progress: OpProgress?
+    /// 最近一次后台文件操作（不含界面刷新）用时，测试报告用
+    var lastOpMs: Double = 0
+    private var opStart = Date()
     private var progressTimer: Timer?
     /// 测试用：同名冲突时的固定选择（nil = 弹出访达样式的对话框）
     static var conflictOverride: (Conflict, Bool)?
     func beginOp(_ verb: String, count: Int) -> OpProgress {
-        let p = OpProgress(); p.verb = verb; p.total = count; progress = p
+        let p = OpProgress(); p.verb = verb; p.total = count; progress = p; opStart = Date()
         busyText = "正在\(verb) \(count) 项…"
         progressTimer?.invalidate()
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
@@ -783,7 +802,7 @@ final class AppState: ObservableObject {
         return p
     }
     func endOp(_ p: OpProgress) {
-        if progress === p { progress = nil; progressTimer?.invalidate(); progressTimer = nil; busyText = nil }
+        if progress === p { lastOpMs = Date().timeIntervalSince(opStart) * 1000; progress = nil; progressTimer?.invalidate(); progressTimer = nil; busyText = nil }
     }
     func cancelOp() { progress?.cancel() }
     /// 访达样式的同名冲突对话框（在后台线程调用，同步等主线程的选择）

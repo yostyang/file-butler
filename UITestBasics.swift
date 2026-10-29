@@ -363,7 +363,7 @@ extension UITestRunner {
         ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 }
         var pr = probe.stop()
         check("性能：拷贝粘贴 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && shown(1).count == N + 3, String(format: "耗时 %dms，主线程最长阻塞 %.1fms，p99 %.1fms", ms, pr.max, pr.p99), t0: t0)
-        perf["copy"] = Double(ms); perf["copyMaxBlock"] = pr.max
+        perf["copy"] = Double(ms); perf["copyOp"] = app.lastOpMs; perf["copyMaxBlock"] = pr.max
         // ⌘A 全选 2003 项
         probe = MainThreadProbe(); probe.start(); t0 = Date()
         press("a", 0, .command); await settle(0.5)
@@ -376,7 +376,7 @@ extension UITestRunner {
         ms = await waitUntil(120) { self.idle() && self.app.panes[1].tab.display.isEmpty }
         pr = probe.stop()
         check("性能：\(N + 3) 个文件移到废纸篓，主线程最长阻塞 < 50ms", pr.max < 50 && names(T).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max), t0: t0)
-        perf["trash"] = Double(ms); perf["trashMaxBlock"] = pr.max
+        perf["trash"] = Double(ms); perf["trashOp"] = app.lastOpMs; perf["trashMaxBlock"] = pr.max
         if case .trashed(let p)? = app.undoStack.last { trashed += p.map { $0.1 } }
         app.undoStack.removeAll()
         // 移动（剪切粘贴）
@@ -387,7 +387,7 @@ extension UITestRunner {
         ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 && self.app.panes[0].tab.display.isEmpty }
         pr = probe.stop()
         check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max) + (ms >= 59000 ? " [左栏显示 \(app.panes[0].tab.display.count) 磁盘 \(names(B).count)，右栏显示 \(app.panes[1].tab.display.count) 磁盘 \(names(T).count)，idle=\(idle())]" : ""), t0: t0)
-        perf["move"] = Double(ms); perf["moveMaxBlock"] = pr.max
+        perf["move"] = Double(ms); perf["moveOp"] = app.lastOpMs; perf["moveMaxBlock"] = pr.max
         // 大目录滚动（列表 / 图标）
         if let (tv, _) = tableCoord(1) {
             probe = MainThreadProbe(); probe.start(); t0 = Date()
