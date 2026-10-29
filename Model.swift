@@ -786,6 +786,8 @@ final class AppState: ObservableObject {
     var progress: OpProgress?
     /// 最近一次后台文件操作（不含界面刷新）用时，测试报告用
     var lastOpMs: Double = 0
+    /// 最近一次撤销放进废纸篓的项目（撤销拷贝时），测试清理用
+    var lastUndoTrashed: [URL] = []
     private var opStart = Date()
     private var progressTimer: Timer?
     /// 测试用：同名冲突时的固定选择（nil = 弹出访达样式的对话框）
@@ -976,8 +978,10 @@ final class AppState: ObservableObject {
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
         let p = beginOp("撤销", count: 1)
         opQueue.async {
-            let err: String? = { do { try FileOps.undo(op); return nil } catch { return error.localizedDescription } }()
+            var put: [URL] = []
+            let err: String? = { do { put = try FileOps.undo(op); return nil } catch { return error.localizedDescription } }()
             DispatchQueue.main.async {
+                self.lastUndoTrashed = put
                 self.endOp(p)
                 if let e = err { self.showError("无法撤销", e) }
                 self.reloadVisible()

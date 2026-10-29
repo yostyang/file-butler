@@ -345,6 +345,8 @@ extension UITestRunner {
         for e in spec { if case .sub(let t, let c) = e, t == "打开方式" { openWith = c.filter { if case .item = $0 { return true }; return false }.count } }
         check("右键：「打开方式」列出可用的 App", openWith >= 2, "\(openWith) 项", t0: t0)
 
+        // ===== 访达规则审计：冲突、撤销、无效操作 =====
+        await finderRuleTests(&trashed)
         // ===== 性能：大批量 =====
         let B = D.appendingPathComponent("批量"), T = D.appendingPathComponent("批量目标")
         try? fm.createDirectory(at: B, withIntermediateDirectories: true); try? fm.createDirectory(at: T, withIntermediateDirectories: true)
@@ -441,4 +443,104 @@ extension UITestRunner {
         let p = perf.map { "\($0.key)=\(String(format: "%.1f", $0.value))" }.sorted().joined(separator: " ")
         try? p.write(to: TestEnv.out.appendingPathComponent("perf.txt"), atomically: true, encoding: .utf8)
     }
+
+    /// 用户反馈：同卷拖动被拷贝、同名时报「已存在」错误。这里逐条按访达规则验证（两栏双向）。
+    func finderRuleTests(_ trashed: inout [URL]) async {
+        let D = TestEnv.fixture.realFileURL.appendingPathComponent("访达规则"), L = D.appendingPathComponent("甲"), R = D.appendingPathComponent("乙")
+        try? fm.removeItem(at: D)
+        for d in [L, R, L.appendingPathComponent("子"), R.appendingPathComponent("收件")] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        for n in ["run.mp3", "x.txt", "y.txt"] { mkfile(L.appendingPathComponent(n), "L-" + n) }
+        for n in ["run.mp3", "x.txt", "y.txt"] { mkfile(R.appendingPathComponent(n), "R-" + n) }
+        mkfile(R.appendingPathComponent("r1.txt"), "r1")
+        func content(_ u: URL) -> String { (try? String(contentsOf: u, encoding: .utf8)) ?? "" }
+        await go(0, L, .list); await go(1, R, .list)
+        guard let (tv0, c0) = tableCoord(0), let (tv1, c1) = tableCoord(1) else { check("访达规则：找到两栏表格", false); return }
+        DragMods.override = []
+        // 1. 同卷拖动 = 移动（右 → 左）
+        var t0 = Date()
+        var d = FakeDrag([R.appendingPathComponent("r1.txt")])
+        var op = c0.tableView(tv0, validateDrop: d, proposedRow: -1, proposedDropOperation: .on)
+        _ = c0.tableView(tv0, acceptDrop: d, row: -1, dropOperation: .on)
+        var ms = await waitUntil { exists(L.appendingPathComponent("r1.txt")) && !exists(R.appendingPathComponent("r1.txt")) && idle() }
+        check("访达规则：同卷拖动 = 移动（右 → 左，不留原件）", op == .move && exists(L.appendingPathComponent("r1.txt")) && !exists(R.appendingPathComponent("r1.txt")), "op=\(op.rawValue) \(ms)ms", t0: t0)
+        // 2. ⌘Z 撤销移动 → 回到原处
+        t0 = Date(); app.undo()
+        ms = await waitUntil { exists(R.appendingPathComponent("r1.txt")) && !exists(L.appendingPathComponent("r1.txt")) && shown(1).contains("r1.txt") && idle() }
+        check("访达规则：⌘Z 撤销移动 → 回到原文件夹", exists(R.appendingPathComponent("r1.txt")) && !exists(L.appendingPathComponent("r1.txt")) && shown(1).contains("r1.txt"), "\(ms)ms", t0: t0)
+        // 3. 拖到侧边栏 / 路径栏（SwiftUI 放下目标）同卷 = 移动
+        t0 = Date()
+        _ = app.dropProviders([NSItemProvider(object: R.appendingPathComponent("r1.txt") as NSURL)], to: L.appendingPathComponent("子"))
+        ms = await waitUntil { exists(L.appendingPathComponent("子/r1.txt")) && idle() }
+        check("访达规则：拖到侧边栏 / 路径栏文件夹 = 移动", exists(L.appendingPathComponent("子/r1.txt")) && !exists(R.appendingPathComponent("r1.txt")), "\(ms)ms", t0: t0)
+        // 4. 冲突：左 → 右移动同名文件，保留两者 → 「run 2.mp3」，原件移走
+        for (dirName, src, dst, cs, cd) in [("左 → 右", L, R, c1, tv1), ("右 → 左", R, L, c0, tv0)] {
+            t0 = Date(); AppState.conflictOverride = (.keepBoth, false)
+            d = FakeDrag([src.appendingPathComponent("run.mp3")])
+            op = cs.tableView(cd, validateDrop: d, proposedRow: -1, proposedDropOperation: .on)
+            _ = cs.tableView(cd, acceptDrop: d, row: -1, dropOperation: .on)
+            ms = await waitUntil { exists(dst.appendingPathComponent("run 2.mp3")) && idle() }
+            check("访达规则：同名冲突（拖动 \(dirName)）保留两者 → 「run 2.mp3」，不报错", op == .move && exists(dst.appendingPathComponent("run 2.mp3")) && exists(dst.appendingPathComponent("run.mp3")) && !exists(src.appendingPathComponent("run.mp3")) && app.alert == nil, "\(ms)ms", t0: t0)
+            // 放回去，下一轮用
+            try? fm.moveItem(at: dst.appendingPathComponent("run 2.mp3"), to: src.appendingPathComponent("run.mp3"))
+        }
+        // 5. 冲突：替换（被替换的进废纸篓，可撤销）/ 停止（不改动）——两个方向
+        t0 = Date(); AppState.conflictOverride = (.replace, false)
+        d = FakeDrag([L.appendingPathComponent("x.txt")]); _ = c1.tableView(tv1, validateDrop: d, proposedRow: -1, proposedDropOperation: .on); _ = c1.tableView(tv1, acceptDrop: d, row: -1, dropOperation: .on)
+        ms = await waitUntil { !exists(L.appendingPathComponent("x.txt")) && idle() }
+        check("访达规则：同名冲突 替换（左 → 右）", content(R.appendingPathComponent("x.txt")) == "L-x.txt" && !exists(L.appendingPathComponent("x.txt")), "\(ms)ms", t0: t0)
+        if case .group(let ops)? = app.undoStack.last { for case .trashed(let p) in ops { trashed += p.map { $0.1 } } }
+        t0 = Date(); AppState.conflictOverride = (.stop, false)
+        d = FakeDrag([R.appendingPathComponent("y.txt")]); _ = c0.tableView(tv0, validateDrop: d, proposedRow: -1, proposedDropOperation: .on); _ = c0.tableView(tv0, acceptDrop: d, row: -1, dropOperation: .on)
+        ms = await waitUntil { idle() }; await settle(0.3)
+        check("访达规则：同名冲突 停止（右 → 左）→ 两边都不变", content(L.appendingPathComponent("y.txt")) == "L-y.txt" && content(R.appendingPathComponent("y.txt")) == "R-y.txt", "\(ms)ms", t0: t0)
+        // 6. 剪切粘贴同名冲突（⌘X → 另一栏 ⌘V）也走同一个对话框
+        t0 = Date(); AppState.conflictOverride = (.keepBoth, false)
+        app.focusPane(0); tlSelect(0, [L.appendingPathComponent("y.txt")]); press("x", 7, .command)
+        await moveMouse(to: center(1)); app.focusPane(1); await settle(0.3); press("v", 9, .command)
+        ms = await waitUntil { exists(R.appendingPathComponent("y 2.txt")) && idle() }
+        check("访达规则：剪切粘贴同名 → 保留两者「y 2.txt」，不报错", exists(R.appendingPathComponent("y 2.txt")) && !exists(L.appendingPathComponent("y.txt")) && app.alert == nil, "\(ms)ms", t0: t0)
+        AppState.conflictOverride = nil
+        // 7. 冲突对话框：文字、按钮顺序与访达一致
+        let a1 = AppState.conflictAlert(name: "run.mp3", move: true, multi: true)
+        check("访达规则：冲突对话框文字（移动）", a1.messageText == "此位置已经存在名称为“run.mp3”的项目。" && a1.informativeText == "你要使用正在移动的项目进行替换吗？", a1.messageText + " / " + a1.informativeText)
+        check("访达规则：按钮 保留两者 | 停止 | 替换（替换为默认，Esc = 停止），多个冲突有「应用到全部」",
+              a1.buttons.map { $0.title } == ["替换", "停止", "保留两者"] && a1.buttons[1].keyEquivalent == "\u{1b}" && a1.showsSuppressionButton && a1.suppressionButton?.title == "应用到全部",
+              a1.buttons.map { $0.title }.reversed().joined(separator: " | "))
+        let a2 = AppState.conflictAlert(name: "a.txt", move: false, multi: false)
+        check("访达规则：拷贝时说「正在拷贝的项目」；只有一个冲突时没有「应用到全部」", a2.informativeText == "你要使用正在拷贝的项目进行替换吗？" && !a2.showsSuppressionButton)
+        // 8. 多个冲突才显示「应用到全部」（按实际冲突数量判断）
+        mkfile(L.appendingPathComponent("m1.txt")); mkfile(L.appendingPathComponent("m2.txt")); mkfile(R.appendingPathComponent("m1.txt")); mkfile(R.appendingPathComponent("m2.txt"))
+        let p = OpProgress(); var multiSeen: [Bool] = []
+        _ = FileOps.transfer([L.appendingPathComponent("m1.txt"), L.appendingPathComponent("m2.txt")], to: R, mode: .copy, progress: p, resolve: { _, _ in multiSeen.append(p.conflictsLeft > 1); return (.skip, false) })
+        let p2 = OpProgress(); var single: [Bool] = []
+        _ = FileOps.transfer([L.appendingPathComponent("m1.txt")], to: R, mode: .copy, progress: p2, resolve: { _, _ in single.append(p2.conflictsLeft > 1); return (.skip, false) })
+        check("访达规则：2 个冲突时第一个对话框带「应用到全部」，最后一个和单个冲突时不带", multiSeen == [true, false] && single == [false], "\(multiSeen) \(single)")
+        // 9. 无效操作：拖回原文件夹、把文件夹拖进它自己、同一文件夹剪切粘贴
+        let rowSub = c0.rows.firstIndex { if case .item(let it) = $0 { return it.name == "子" }; return false } ?? -1
+        op = c0.tableView(tv0, validateDrop: FakeDrag([L.appendingPathComponent("子")]), proposedRow: rowSub, proposedDropOperation: .on)
+        check("访达规则：把文件夹拖到它自己上 → 拒绝", rowSub >= 0 && op == [], "op=\(op.rawValue)")
+        op = c0.tableView(tv0, validateDrop: FakeDrag([L.appendingPathComponent("run.mp3")]), proposedRow: -1, proposedDropOperation: .on)
+        check("访达规则：拖到它所在的文件夹 → 不做任何事", op == [], "op=\(op.rawValue)")
+        t0 = Date()
+        let before = names(L)
+        await moveMouse(to: center(0)); app.focusPane(0); tlSelect(0, [L.appendingPathComponent("run.mp3")]); press("x", 7, .command); press("v", 9, .command)
+        await waitUntil(2) { self.idle() }; await settle(0.4)
+        check("访达规则：剪切后在同一文件夹粘贴 → 不做任何事（不产生副本）", names(L) == before && app.alert == nil, "\(names(L).sorted())", t0: t0)
+        // 10. 拷贝后 ⌘Z → 拷贝出的项目被撤销
+        t0 = Date(); DragMods.override = .option
+        d = FakeDrag([L.appendingPathComponent("run.mp3")]); _ = c1.tableView(tv1, validateDrop: d, proposedRow: -1, proposedDropOperation: .on); _ = c1.tableView(tv1, acceptDrop: d, row: -1, dropOperation: .on)
+        DragMods.override = []
+        await waitUntil { exists(R.appendingPathComponent("run 2.mp3")) && self.idle() }
+        app.undo()
+        ms = await waitUntil { !exists(R.appendingPathComponent("run 2.mp3")) && self.idle() }
+        trashed += app.lastUndoTrashed
+        check("访达规则：⌥ 拷贝后 ⌘Z → 拷贝被撤销，原件还在", !exists(R.appendingPathComponent("run 2.mp3")) && exists(L.appendingPathComponent("run.mp3")), "\(ms)ms", t0: t0)
+        // 11. 重命名为已有名称 → 访达的提示，不改动
+        t0 = Date(); app.alert = nil
+        app.rename(L.appendingPathComponent("run.mp3"), to: "子")
+        await settle(0.3)
+        check("访达规则：重命名为已有名称 → 提示「名称“子”已被使用。请选取一个不同的名称。」", (app.alert?.message ?? "").contains("名称“子”已被使用。请选取一个不同的名称。") && exists(L.appendingPathComponent("run.mp3")), app.alert?.message ?? "无提示", t0: t0)
+        app.alert = nil
+    }
+    func tlSelect(_ pane: Int, _ urls: [URL]) { let t = app.panes[pane].tab; t.selection = Set(urls.map { $0.standardizedFileURL }); t.anchor = urls.first }
 }
