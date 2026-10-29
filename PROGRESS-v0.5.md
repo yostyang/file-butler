@@ -5,5 +5,5 @@
 - [x] 4 test.sh 连续两次全绿（自测 53/53，界面 118/118，截图 19/19）
 - [x] 5 基准：cp -c 267ms，ditto 298ms，mv 196ms
 - [x] 6 DMG 看门狗
-- [ ] 7 release.sh 0.5.0（落地页用 releases/latest，无需改版本）
+- [!] 7 release.sh 停在「退出旧版文件管家」：quit 返回「用户已取消(-128)」，旧版(运行 2 天半)可能有对话框打开；未强杀，未安装、未 push、未发 Release
 - [ ] 8 /workspace/fb-v05
