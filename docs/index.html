@@ -3,312 +3,1358 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>文件管家 · File Butler</title>
-<meta name="description" content="轻量的 macOS 双栏文件管理器。A lightweight dual-pane file manager for macOS.">
+<title>文件管家 · 比访达更顺手的 macOS 双栏文件管理器</title>
+<meta name="description" content="双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少，占用却更低。原生 Swift 编写，开源免费。">
+<meta name="theme-color" content="#07070a">
+<meta property="og:title" content="文件管家 · 比访达更顺手的 macOS 双栏文件管理器">
+<meta property="og:description" content="双栏 + 标签页 + 实时预览 + 空间分析，轻量到空闲 0% CPU。开源免费。">
+<meta property="og:image" content="icon.png">
 <link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
 <style>
-:root{--ink:#111112;--mute:#6b6f7b;--line:#e9eaeb;--bg:#fcfcfc;--gray:#f3f4f6;--a:#5b55f5;--b:#2ea7f2}
+/* ============ tokens ============ */
+:root{
+  --bg:#07070a;
+  --ink:#f4f4f8;
+  --ink-2:#c9c9d6;
+  --mute:#8a8a9e;
+  --mute-2:#6b6b80;
+  --line:rgba(255,255,255,.10);
+  --line-2:rgba(255,255,255,.055);
+  --card:rgba(255,255,255,.035);
+  --a1:#6869f9;
+  --a2:#3ea9f6;
+  --a3:#6b5cfa;
+  --ok:#3ddc84;
+  --warn:#ffb340;
+  --max:1120px;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--ink);
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  overflow-x:clip;line-height:1.5;
+}
 a{color:inherit;text-decoration:none}
-.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;font-weight:500;font-size:14px;padding:10px 20px;transition:.2s}
-.pill.blue{background:var(--a);color:#fff}.pill.blue:hover{background:#4842e0}
-.pill.light{background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.08)}
-.pill.sm{font-size:13px;padding:7px 15px}
-/* header */
-header{position:fixed;top:0;left:0;right:0;z-index:10;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 max(24px,calc((100vw - 1040px)/2));transition:.25s}
-header.scrolled{background:rgba(252,252,252,.85);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;opacity:0;transition:.25s}
-header.scrolled .brand{opacity:1}
-.brand img{width:26px;height:26px}
-.right{display:flex;align-items:center;gap:10px}
-.lang{display:flex;background:var(--gray);border-radius:999px;padding:3px}
-.lang button{border:0;background:none;font:inherit;font-size:12px;padding:5px 11px;border-radius:999px;cursor:pointer;color:var(--mute)}
-.lang button.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.08)}
-/* hero */
-.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:80px 24px}
-.hero img.logo{width:84px;height:84px;border-radius:20px;box-shadow:0 10px 30px rgba(60,50,160,.25);margin-bottom:36px}
-h1{font-size:clamp(34px,5.4vw,60px);font-weight:500;letter-spacing:-.03em;line-height:1.15}
-.rot{display:inline-block;position:relative;color:var(--a);min-width:2.4em;text-align:center}
-.rot span{display:inline-block;animation:in .5s ease}
-@keyframes in{from{opacity:0;transform:translateY(.4em)}to{opacity:1;transform:none}}
-.hero p{margin-top:22px;font-size:17px;color:var(--mute);max-width:560px;line-height:1.7}
-.hero .cta{margin-top:34px;display:flex;flex-direction:column;align-items:center;gap:12px}
-.hero small{font-size:12px;color:var(--mute)}
-.more{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:9;font-size:13px;transition:.3s}
-.more.hide{opacity:0;pointer-events:none}
-/* sections */
-section{padding:120px 24px}
-section.g{background:var(--gray)}
-.inner{max-width:880px;margin:0 auto}
-h2{font-size:clamp(26px,3.4vw,36px);font-weight:500;letter-spacing:-.02em;line-height:1.25}
-.lead{color:var(--mute);font-size:16px;line-height:1.75;margin-top:16px}
-.center{text-align:center}.center .lead{max-width:600px;margin-left:auto;margin-right:auto}
-.story{max-width:620px;margin:0 auto}
-.story p{font-size:18px;line-height:1.85;color:#3b3e48;margin-top:22px}
-.story p.big{font-size:24px;color:var(--ink);font-weight:500;letter-spacing:-.01em}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
-.row.rev .txt{order:2}
-.txt{max-width:340px}
-.media{background:#fff;border-radius:24px;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;padding:28px;box-shadow:0 1px 0 var(--line)}
-section.g .media{background:#fff}section:not(.g) .media{background:var(--gray)}
-/* mini UI */
-.ui{width:100%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(20,20,60,.08);padding:16px;font-size:12px}
-.ui .h{font-weight:600;font-size:13px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
-.ui .it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #f1f1f4}
-.ui .it:first-of-type{border-top:0}
-.ui .it em{flex:1;font-style:normal}
-.ui .it small{display:block;color:var(--mute);font-size:10.5px}
-.dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;flex:none}.dot.ok{background:#22c55e}
-.sw{width:28px;height:16px;border-radius:9px;background:var(--a);position:relative;flex:none}.sw:after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
-.sw.off{background:#d9dae0}.sw.off:after{left:2px;right:auto}
-.tag{font-size:10.5px;color:var(--a);background:#eeedff;border-radius:999px;padding:3px 9px;flex:none}
-.score{width:44px;height:44px;border-radius:12px;background:#fff4e5;color:#e58a00;font-weight:700;font-size:17px;display:grid;place-items:center}
-.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.m{background:#f7f7fa;border-radius:10px;padding:10px}.m b{display:block;font-size:18px;margin:2px 0 6px}.m small{color:var(--mute);font-size:10px}
-.bar{height:4px;border-radius:4px;background:#e4e3fb;overflow:hidden}.bar i{display:block;height:100%;background:var(--a)}
-.bar.o i{background:#f59e0b}
-/* list */
-.list{display:grid;grid-template-columns:1fr 1.3fr;gap:64px;align-items:center}
-.list ul{list-style:none}
-.list li{display:flex;gap:14px;padding:20px 0;border-bottom:1px solid var(--line)}
-.list li:last-child{border:0}
-.list li .ic{font-size:16px;color:var(--mute);width:20px;flex:none;line-height:1.4}
-.list li b{font-weight:600;font-size:15px}
-.list li p{color:var(--mute);font-size:13.5px;line-height:1.65;margin-top:4px}
-.steps{counter-reset:s;max-width:620px;margin:40px auto 0;text-align:left}
-.steps li{list-style:none;counter-increment:s;position:relative;padding:18px 0 18px 48px;border-bottom:1px solid var(--line);font-size:15px;line-height:1.7;color:#3b3e48}
-.steps li:before{content:counter(s);position:absolute;left:0;top:18px;width:28px;height:28px;border-radius:50%;background:#fff;border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:600}
-code{background:#fff;border:1px solid var(--line);padding:2px 7px;border-radius:6px;font-size:12.5px;word-break:break-all}
-.final{padding:160px 24px}
-.final h2{font-size:clamp(30px,4.2vw,46px)}
-.final .pill{margin-top:30px;font-size:15px;padding:13px 28px}
-footer{display:flex;justify-content:space-between;align-items:center;max-width:1040px;margin:0 auto;padding:28px 24px;font-size:12px;color:var(--mute);border-top:1px solid var(--line)}
-footer nav{display:flex;gap:20px}
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
-.reveal.on{opacity:1;transform:none}
-@media(max-width:760px){.row,.list{grid-template-columns:1fr;gap:32px}.row.rev .txt{order:0}.txt{max-width:none}section{padding:80px 20px}}
-.note{font-size:10.5px;color:var(--mute);text-align:center;margin-top:10px}
-.panes{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pane{background:#f7f7fa;border-radius:10px;padding:8px}.pane.act{box-shadow:inset 0 2px 0 var(--a)}
-.tabs{display:flex;gap:4px;margin-bottom:6px}.tabs span{font-size:10px;padding:3px 7px;border-radius:6px;background:#ececf2}.tabs span.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.fr{display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:11px}.fr.sel{background:var(--a);color:#fff;border-radius:5px}
-.fi{width:12px;height:10px;border-radius:2px;background:#7fb5f5;flex:none}.fi.d{background:#e2e3ea}
-.seg{display:flex;gap:2px;background:#ececf2;border-radius:7px;padding:2px;width:max-content;margin-bottom:10px}.seg i{width:24px;height:18px;border-radius:5px;font-style:normal;font-size:10px;display:grid;place-items:center;color:var(--mute)}.seg i.on{background:#fff;color:var(--ink)}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.grid div{aspect-ratio:1;border-radius:8px;background:linear-gradient(135deg,#e8e6ff,#d9f0ff)}.grid div.s{outline:2px solid var(--a)}
-.pv{height:110px;border-radius:10px;background:linear-gradient(135deg,#6b5cf6,#2ea7f2);margin-bottom:8px}
-.kv{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-top:1px solid #f1f1f4}.kv span{color:var(--mute)}
-.td{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:3px;vertical-align:middle}
-.cmp{width:100%;border-collapse:collapse;font-size:12px}.cmp td,.cmp th{padding:7px 4px;border-top:1px solid #f1f1f4;text-align:left}.cmp th{color:var(--mute);font-weight:500;border:0}.cmp b{color:var(--a)}
+img{max-width:100%;display:block}
+::selection{background:rgba(104,105,249,.4)}
+
+/* ============ ambience ============ */
+.ambient{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.ambient::before{
+  content:"";position:absolute;inset:-6%;
+  background:linear-gradient(133deg,rgba(107,92,250,.20) 0%,rgba(104,105,249,.13) 34%,rgba(62,169,246,.07) 66%,rgba(62,169,246,.17) 100%);
+}
+.blob{position:absolute;border-radius:50%;filter:blur(110px);will-change:transform}
+.b1{width:64vw;height:64vw;left:-20vw;top:-24vw;background:radial-gradient(circle,rgba(107,92,250,.62),transparent 68%);opacity:.6;animation:drift1 27s ease-in-out infinite}
+.b2{width:56vw;height:56vw;right:-16vw;top:-6vw;background:radial-gradient(circle,rgba(62,169,246,.5),transparent 68%);opacity:.55;animation:drift2 33s ease-in-out infinite}
+.b3{width:46vw;height:46vw;left:26vw;top:54vh;background:radial-gradient(circle,rgba(104,105,249,.3),transparent 70%);opacity:.5;animation:drift1 39s ease-in-out infinite reverse}
+.b4{width:52vw;height:52vw;left:-14vw;bottom:-20vw;background:radial-gradient(circle,rgba(62,169,246,.34),transparent 70%);opacity:.5;animation:drift2 44s ease-in-out infinite reverse}
+@keyframes drift1{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(6vw,5vh,0) scale(1.12)}}
+@keyframes drift2{0%,100%{transform:translate3d(0,0,0) scale(1.05)}50%{transform:translate3d(-7vw,7vh,0) scale(.92)}}
+.grid-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:linear-gradient(var(--line-2) 1px,transparent 1px),linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+  background-size:72px 72px;
+  -webkit-mask-image:radial-gradient(ellipse 65% 55% at 50% 22%,#000 10%,transparent 78%);
+  mask-image:radial-gradient(ellipse 65% 55% at 50% 22%,#000 10%,transparent 78%);
+}
+.grain{
+  position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.028;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+main{position:relative;z-index:2}
+
+/* ============ header ============ */
+.progress{position:fixed;top:0;left:0;height:2px;width:0;z-index:60;background:linear-gradient(90deg,var(--a3),var(--a1),var(--a2));box-shadow:0 0 14px rgba(104,105,249,.9)}
+header{
+  position:fixed;top:0;left:0;right:0;z-index:50;height:66px;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 max(22px,calc((100vw - var(--max))/2));
+  transition:background .35s var(--ease),border-color .35s,backdrop-filter .35s,height .35s;
+  border-bottom:1px solid transparent;
+}
+header.scrolled{
+  height:58px;background:rgba(7,7,10,.72);backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom-color:var(--line-2);
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14.5px;letter-spacing:-.01em;white-space:nowrap}
+.brand img{width:26px;height:26px;border-radius:7px;box-shadow:0 2px 10px rgba(104,105,249,.4)}
+.navlinks{display:flex;align-items:center;gap:30px;font-size:13.5px;color:var(--mute)}
+.navlinks a{position:relative;transition:color .25s}
+.navlinks a:hover{color:var(--ink)}
+.navlinks a::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:1px;background:linear-gradient(90deg,var(--a1),var(--a2));transform:scaleX(0);transform-origin:left;transition:transform .35s var(--ease)}
+.navlinks a:hover::after{transform:scaleX(1)}
+.right{display:flex;align-items:center;gap:12px}
+.lang{display:flex;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:999px;padding:3px}
+.lang button{border:0;background:none;font:inherit;font-size:11.5px;padding:5px 11px;border-radius:999px;cursor:pointer;color:var(--mute);transition:.25s;letter-spacing:.02em}
+.lang button.on{background:rgba(255,255,255,.12);color:var(--ink)}
+.lang button:hover{color:var(--ink)}
+
+/* ============ buttons ============ */
+.btn{
+  position:relative;display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  height:50px;padding:0 26px;border-radius:999px;font-size:14.5px;font-weight:560;
+  letter-spacing:-.005em;white-space:nowrap;cursor:pointer;overflow:hidden;
+  transition:transform .35s var(--ease),box-shadow .35s var(--ease),background .3s,border-color .3s;
+  will-change:transform;
+}
+.btn svg{width:16px;height:16px;flex:none}
+.btn-primary{
+  background:linear-gradient(180deg,#7a7bfa,#5c5df0);color:#fff;
+  box-shadow:0 12px 34px -10px rgba(104,105,249,.85),inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(0,0,0,.15);
+}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 18px 44px -12px rgba(104,105,249,1),inset 0 1px 0 rgba(255,255,255,.32)}
+.btn-primary::after{
+  content:"";position:absolute;top:0;bottom:0;left:-40%;width:40%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.45),transparent);
+  transform:skewX(-18deg) translateX(-180%);transition:transform .9s var(--ease);
+}
+.btn-primary:hover::after{transform:skewX(-18deg) translateX(520%)}
+.btn-ghost{background:rgba(255,255,255,.045);color:var(--ink);border:1px solid var(--line);backdrop-filter:blur(10px)}
+.btn-ghost:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);transform:translateY(-2px)}
+.btn-sm{height:36px;padding:0 16px;font-size:12.5px}
+
+/* ============ type ============ */
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:22px;
+}
+.eyebrow::before{content:"";width:22px;height:1px;background:linear-gradient(90deg,var(--a1),transparent)}
+.eyebrow .dotp{width:5px;height:5px;border-radius:50%;background:var(--a2);box-shadow:0 0 10px var(--a2);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.75)}}
+h2{font-size:clamp(28px,4.4vw,50px);font-weight:600;letter-spacing:-.035em;line-height:1.1;text-wrap:balance}
+h3{font-size:16.5px;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.lead{color:var(--mute);font-size:16.5px;line-height:1.72;margin-top:18px;max-width:620px}
+.grad-text{background:linear-gradient(96deg,#8f8dff 0%,#6869f9 34%,#3ea9f6 100%);-webkit-background-clip:text;background-clip:text;color:transparent;background-size:200% 100%;animation:sheen 9s ease-in-out infinite}
+@keyframes sheen{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+
+/* ============ layout ============ */
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+section{position:relative;padding:clamp(84px,10vw,150px) 0;scroll-margin-top:72px}
+.sec-head{max-width:720px}
+.sec-head.center{margin:0 auto;text-align:center}
+.sec-head.center .lead{margin-left:auto;margin-right:auto}
+.sec-head.center .eyebrow::before{display:none}
+
+/* ============ hero ============ */
+.hero{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:104px 24px 0;overflow:hidden}
+.hero-inner{max-width:960px;position:relative;z-index:2}
+.badge{
+  display:inline-flex;align-items:center;gap:9px;height:32px;padding:0 14px 0 11px;border-radius:999px;
+  background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:12px;color:var(--ink-2);
+  backdrop-filter:blur(10px);letter-spacing:.01em;
+}
+.badge b{color:var(--ink);font-weight:600}
+.badge .led{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);animation:pulse 2.4s ease-in-out infinite}
+h1{margin-top:24px;font-size:clamp(34px,5.6vw,68px);font-weight:650;letter-spacing:-.042em;line-height:1.05;text-wrap:balance}
+html[lang="zh-CN"] h1{letter-spacing:-.026em}
+html[lang="zh-CN"] h2{letter-spacing:-.02em}
+html[lang="zh-CN"] .quote{letter-spacing:-.022em;line-height:1.4}
+h1 .line{display:block}
+.rot{display:inline-block;position:relative;min-width:2.2em;text-align:left;vertical-align:baseline}
+.rot span{display:inline-block;background:linear-gradient(100deg,#8f8dff,#6869f9 45%,#3ea9f6);-webkit-background-clip:text;background-clip:text;color:transparent;animation:rotIn .62s var(--ease)}
+@keyframes rotIn{0%{opacity:0;filter:blur(14px);transform:translateY(.42em) scale(.92)}100%{opacity:1;filter:blur(0);transform:translateY(0) scale(1)}}
+.hero p.sub{margin:26px auto 0;max-width:620px;font-size:clamp(15px,1.7vw,18px);line-height:1.7;color:var(--mute)}
+.hero-cta{margin-top:36px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+.hero-meta{margin-top:20px;font-size:12px;color:var(--mute-2);letter-spacing:.02em}
+.hero-meta i{font-style:normal;margin:0 9px;opacity:.45}
+
+.rise{opacity:0;transform:translateY(26px);animation:rise .95s var(--ease) forwards;animation-delay:var(--d,0s)}
+@keyframes rise{to{opacity:1;transform:none}}
+
+/* ============ window mockup ============ */
+.hero-visual{position:relative;width:min(900px,100%);margin:clamp(36px,4vw,46px) auto 0;perspective:1600px;z-index:2}
+.hv-glow{
+  position:absolute;left:50%;top:12%;width:78%;height:70%;transform:translateX(-50%);
+  background:radial-gradient(ellipse at center,rgba(104,105,249,.55),rgba(62,169,246,.2) 45%,transparent 72%);
+  filter:blur(60px);pointer-events:none;
+}
+.tilt{transform-style:preserve-3d;transition:transform .5s var(--ease);will-change:transform}
+.float{animation:float 9s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+.win{
+  position:relative;z-index:1;background:#fff;border-radius:14px;overflow:hidden;text-align:left;
+  box-shadow:0 50px 120px -30px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.14),0 0 90px -20px rgba(104,105,249,.5);
+}
+.win-bar{height:40px;display:flex;align-items:center;gap:8px;padding:0 14px;background:linear-gradient(180deg,#fbfbfd,#f4f4f7);border-bottom:1px solid #e9e9ee}
+.win-bar i{width:11px;height:11px;border-radius:50%;display:block;flex:none}
+.win-bar i:nth-child(1){background:#ff5f57}.win-bar i:nth-child(2){background:#febc2e}.win-bar i:nth-child(3){background:#28c840}
+.win-title{flex:1;text-align:center;font-size:11.5px;color:#8b8f9b;font-weight:500;margin-right:46px}
+.tabs{display:flex;align-items:center;gap:6px;padding:8px 14px 0;background:#f4f4f7;border-bottom:1px solid #e9e9ee}
+.tab{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 11px;border-radius:7px 7px 0 0;
+  font-size:11px;color:#6f7480;background:transparent;position:relative;top:1px;
+}
+.tab.on{background:#fff;color:#1b1b22;font-weight:600;box-shadow:0 -1px 0 #e9e9ee,1px 0 0 #e9e9ee,-1px 0 0 #e9e9ee}
+.tab.add{color:#a6a9b3;font-size:13px;padding:0 8px}
+.panes{display:grid;grid-template-columns:1fr 26px 1fr;background:#fff}
+.pane{min-width:0;padding:0 0 8px}
+.pane-head{
+  display:flex;align-items:center;gap:6px;padding:9px 13px;font-size:10.5px;color:#8b8f9b;
+  border-bottom:1px solid #f2f2f6;white-space:nowrap;overflow:hidden;
+}
+.pane-head b{color:#2b2b34;font-weight:600;font-size:11px}
+.pane-head .sep{opacity:.5}
+.divider{background:#fff;position:relative}
+.divider::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:#ececf1}
+.divider .f5{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  height:20px;padding:0 7px;border-radius:6px;display:grid;place-items:center;
+  font-size:8.5px;font-weight:800;letter-spacing:.04em;color:#fff;
+  background:linear-gradient(180deg,#7a7bfa,#5c5df0);box-shadow:0 3px 10px -2px rgba(104,105,249,.8);
+}
+.frow{display:flex;align-items:center;gap:9px;padding:6px 13px;font-size:11.5px;color:#2b2b34;opacity:0;transform:translateY(4px);animation:rowIn .5s var(--ease) forwards}
+@keyframes rowIn{to{opacity:1;transform:none}}
+.frow.sel{background:linear-gradient(90deg,rgba(104,105,249,.13),rgba(104,105,249,.05));box-shadow:inset 2px 0 0 #6869f9}
+.frow .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .fs{font-size:10px;color:#a0a4b0;font-variant-numeric:tabular-nums;flex:none}
+.fi{
+  width:19px;height:19px;border-radius:5px;display:grid;place-items:center;flex:none;
+  font-size:6px;font-weight:800;color:#fff;letter-spacing:.02em;font-family:"SF Mono",ui-monospace,monospace;
+}
+.fi.pdf{background:linear-gradient(160deg,#ff7b7b,#e03131)}
+.fi.md{background:linear-gradient(160deg,#98a0b4,#646d80)}
+.fi.png{background:linear-gradient(160deg,#4ec98a,#1f9e68)}
+.fi.dmg{background:linear-gradient(160deg,#6b5cfa,#7c5cf0)}
+.fi.heic{background:linear-gradient(160deg,#f0a63b,#dd7f14)}
+.fi.folder{background:linear-gradient(160deg,#6b8cf8,#4a6ff0)}
+.fi.folder::before{
+  content:"";width:10px;height:8px;background:#fff;opacity:.95;
+  clip-path:polygon(0 0,4px 0,5.5px 1.8px,10px 1.8px,10px 8px,0 8px);
+}
+.fi.num{background:linear-gradient(160deg,#f5c542,#e0a800)}
+.fi.zip{background:linear-gradient(160deg,#9aa4b8,#6d7689)}
+.fi.doc{background:linear-gradient(160deg,#5b8def,#2f6fe0)}
+.win-status{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:7px 14px;border-top:1px solid #ececf1;background:#fafafc;font-size:10px;color:#9aa0ac;
+}
+.win-status .k{display:inline-flex;align-items:center;gap:5px}
+.win-status kbd{
+  font-family:inherit;font-size:9px;padding:2px 5px;border-radius:4px;background:#eceef3;color:#6f7480;
+  border-bottom:1px solid #d9dce4;font-weight:600;
+}
+.chip{
+  position:absolute;right:-22px;top:-34px;z-index:3;display:flex;align-items:center;gap:9px;
+  height:36px;padding:0 14px;border-radius:999px;font-size:11px;color:var(--ink);
+  background:rgba(18,20,30,.85);border:1px solid rgba(255,255,255,.13);
+  backdrop-filter:blur(18px);box-shadow:0 16px 40px -12px rgba(0,0,0,.9);
+}
+.chip b{font-variant-numeric:tabular-nums;font-weight:600}
+.chip .bars{display:flex;gap:2.5px;align-items:flex-end;height:12px}
+.chip .bars i{width:2.5px;border-radius:2px;background:linear-gradient(180deg,var(--a2),var(--a1));animation:eq 1.4s ease-in-out infinite}
+.chip .bars i:nth-child(1){height:40%}
+.chip .bars i:nth-child(2){height:75%;animation-delay:.15s}
+.chip .bars i:nth-child(3){height:55%;animation-delay:.3s}
+.chip .bars i:nth-child(4){height:95%;animation-delay:.45s}
+.chip .bars i:nth-child(5){height:35%;animation-delay:.6s}
+@keyframes eq{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+.chip2{
+  position:absolute;left:-22px;top:-34px;z-index:3;display:flex;align-items:center;gap:8px;
+  height:34px;padding:0 14px;border-radius:999px;font-size:11px;color:#d6d6e4;
+  background:rgba(18,20,30,.85);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(18px);
+  box-shadow:0 16px 40px -12px rgba(0,0,0,.9);
+}
+.chip2 svg{width:13px;height:13px;color:var(--ok)}
+.scroll-hint{
+  margin:clamp(36px,5vw,56px) auto 46px;display:flex;flex-direction:column;align-items:center;gap:10px;
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute-2);
+}
+.scroll-hint .bar{width:1px;height:38px;background:linear-gradient(180deg,rgba(255,255,255,.35),transparent);position:relative;overflow:hidden}
+.scroll-hint .bar::after{content:"";position:absolute;top:-38px;left:0;width:1px;height:38px;background:linear-gradient(180deg,transparent,#fff);animation:scrolldot 2.2s ease-in-out infinite}
+@keyframes scrolldot{0%{top:-38px}70%,100%{top:38px}}
+
+/* ============ marquee ============ */
+.marquee{position:relative;padding:0;border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2);background:rgba(255,255,255,.018);overflow:hidden}
+.marquee::before,.marquee::after{content:"";position:absolute;top:0;bottom:0;width:140px;z-index:2;pointer-events:none}
+.marquee::before{left:0;background:linear-gradient(90deg,var(--bg),transparent)}
+.marquee::after{right:0;background:linear-gradient(270deg,var(--bg),transparent)}
+.mq-track{display:flex;width:max-content;animation:mq 44s linear infinite}
+.marquee:hover .mq-track{animation-play-state:paused}
+@keyframes mq{to{transform:translateX(-50%)}}
+.mq-item{display:flex;align-items:center;gap:14px;padding:22px 26px;font-size:14px;color:var(--mute);white-space:nowrap}
+.mq-item::after{content:"";width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.2);margin-left:12px}
+.mq-item b{color:var(--ink-2);font-weight:500;opacity:.85}
+
+/* ============ reveal ============ */
+.rv{opacity:0;transform:translateY(30px);transition:opacity 1s var(--ease),transform 1s var(--ease);transition-delay:var(--d,0s)}
+.rv.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){
+  .rv{opacity:1!important;transform:none!important;transition:none!important}
+  .rise{animation:none!important;opacity:1!important;transform:none!important}
+  .frow{animation:none!important;opacity:1!important;transform:none!important}
+  .float,.blob,.mq-track,.grad-text,.chip .bars i,.eyebrow .dotp,.badge .led,.flow-chip{animation:none!important}
+  .rot span{animation:none!important}
+}
+
+/* ============ problem ============ */
+.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:56px}
+.pcard{
+  position:relative;padding:30px 26px 32px;border-radius:20px;border:1px solid var(--line-2);
+  background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
+  overflow:hidden;transition:transform .5s var(--ease),border-color .4s,background .4s;
+}
+.pcard:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02))}
+.pcard .num{font-size:11px;letter-spacing:.18em;color:var(--mute-2);font-weight:600;margin-bottom:26px;display:block}
+.pcard .num em{font-style:normal;background:linear-gradient(100deg,var(--a1),var(--a2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.pcard h3{margin-bottom:11px}
+.pcard p{font-size:13.8px;line-height:1.72;color:var(--mute)}
+.pcard::after{
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);opacity:0;transition:opacity .4s;
+}
+.pcard:hover::after{opacity:1}
+.quote{margin:clamp(56px,7vw,90px) auto 0;max-width:820px;text-align:center;font-size:clamp(22px,3.4vw,38px);font-weight:600;letter-spacing:-.035em;line-height:1.32}
+.quote span{display:block;color:var(--mute-2);font-size:clamp(15px,1.8vw,19px);font-weight:400;letter-spacing:-.01em;margin-top:20px;line-height:1.7}
+
+/* ============ vs band ============ */
+.vs-band{padding:0 0 clamp(84px,10vw,150px)}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,4vw,56px);position:relative}
+.vs::after{
+  content:"VS";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+  font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--mute);
+  background:#0b0b11;border:1px solid var(--line);z-index:3;box-shadow:0 0 0 6px rgba(7,7,10,.9);
+}
+.vs-card{position:relative;padding:clamp(26px,3vw,34px);border-radius:22px;border:1px solid var(--line-2);overflow:hidden}
+.vs-card.old{background:linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,.006))}
+.vs-card.new{
+  background:linear-gradient(165deg,rgba(104,105,249,.16),rgba(62,169,246,.05) 60%,rgba(255,255,255,.02));
+  border-color:rgba(140,140,252,.32);
+  box-shadow:0 34px 80px -44px rgba(104,105,249,.95),inset 0 1px 0 rgba(255,255,255,.13);
+}
+.vs-card.new::before{
+  content:"";position:absolute;inset:-50% -20% auto -20%;height:90%;pointer-events:none;
+  background:radial-gradient(ellipse at center,rgba(104,105,249,.3),transparent 62%);filter:blur(40px);
+}
+.vs-tag{position:relative;display:inline-flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:650;padding:5px 11px;border-radius:999px;margin-bottom:18px}
+.vs-card.old .vs-tag{background:rgba(255,255,255,.05);color:var(--mute);border:1px solid var(--line-2)}
+.vs-card.new .vs-tag{background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.2)}
+.vs-card h3{position:relative;font-size:clamp(17px,1.9vw,21px);margin-bottom:22px;letter-spacing:-.02em;line-height:1.35}
+.vs-card.old h3{color:var(--mute)}
+.vs-card ul{position:relative;list-style:none;display:flex;flex-direction:column;gap:13px}
+.vs-card li{display:flex;gap:11px;font-size:13.5px;line-height:1.6;color:var(--mute);align-items:flex-start}
+.vs-card.new li{color:var(--ink-2)}
+.vs-card li i{flex:none;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;margin-top:2px;font-size:9.5px;font-style:normal;font-weight:800;line-height:1}
+.vs-card.old li i{background:rgba(255,255,255,.055);color:#75758c}
+.vs-card.new li i{background:rgba(61,220,132,.16);color:var(--ok)}
+
+/* ============ core ============ */
+.core{display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(40px,6vw,80px);align-items:center}
+.steps{display:flex;flex-direction:column;gap:0;margin-top:38px;border-top:1px solid var(--line-2)}
+.step{display:flex;gap:18px;padding:22px 0;border-bottom:1px solid var(--line-2)}
+.step .n{
+  width:28px;height:28px;flex:none;border-radius:9px;display:grid;place-items:center;
+  font-size:12px;font-weight:650;color:var(--ink);background:rgba(255,255,255,.06);
+  border:1px solid var(--line);
+}
+.step b{display:block;font-size:14.5px;font-weight:600;margin-bottom:5px}
+.step p{font-size:13.5px;line-height:1.68;color:var(--mute)}
+.panel{
+  position:relative;border-radius:24px;padding:22px;
+  background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.015));
+  border:1px solid var(--line);overflow:hidden;
+  box-shadow:0 40px 90px -40px rgba(0,0,0,.9);
+}
+.panel::before{
+  content:"";position:absolute;inset:-40% -20% auto -20%;height:80%;
+  background:radial-gradient(ellipse at center,rgba(104,105,249,.35),transparent 62%);
+  filter:blur(50px);pointer-events:none;
+}
+.shine-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.4),transparent);animation:sweep 6s ease-in-out infinite}
+@keyframes sweep{0%,100%{top:0;opacity:0}10%{opacity:1}50%{top:100%;opacity:.6}60%,90%{opacity:0}}
+
+/* flow diagram */
+.flow{position:relative;display:grid;grid-template-columns:1fr 54px 1fr;align-items:center;gap:0;background:#fff;border-radius:14px;padding:16px;box-shadow:0 20px 50px -20px rgba(0,0,0,.6)}
+.fpane{background:#f8f8fb;border:1px solid #ececf1;border-radius:10px;overflow:hidden}
+.fpane .mh{display:flex;align-items:center;gap:5px;padding:7px 9px;font-size:9.5px;color:#8b8f9b;border-bottom:1px solid #ececf1;background:#fff}
+.fpane .mh b{color:#2b2b34;font-size:10px;font-weight:600}
+.fpane .mr{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:10.5px;color:#2b2b34}
+.fpane .mr .fi{width:16px;height:16px;border-radius:4px;font-size:5px}
+.fpane .mr.sel{background:rgba(104,105,249,.1)}
+.fpane .mr.ghost{opacity:.35}
+.flow-mid{position:relative;height:100%;display:grid;place-items:center}
+.flow-mid::before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:repeating-linear-gradient(90deg,#cfd3de 0 3px,transparent 3px 6px)}
+.flow-mid span{
+  position:relative;z-index:2;height:22px;padding:0 8px;border-radius:6px;display:grid;place-items:center;
+  font-size:9px;font-weight:800;letter-spacing:.04em;color:#fff;
+  background:linear-gradient(180deg,#7a7bfa,#5c5df0);box-shadow:0 4px 12px -2px rgba(104,105,249,.9);
+  animation:f5pulse 4.2s var(--ease) infinite;
+}
+@keyframes f5pulse{
+  0%,58%,100%{transform:scale(1);box-shadow:0 4px 12px -2px rgba(104,105,249,.9)}
+  14%,34%{transform:scale(1.14);box-shadow:0 7px 20px -2px rgba(104,105,249,1)}
+}
+.fpane .mr.new{animation:rowNew 4.2s var(--ease) infinite}
+@keyframes rowNew{
+  0%{background:rgba(104,105,249,.3);box-shadow:inset 0 0 0 1px rgba(104,105,249,.4)}
+  6%{background:rgba(104,105,249,.3);box-shadow:inset 0 0 0 1px rgba(104,105,249,.4)}
+  46%,100%{background:transparent;box-shadow:none}
+}
+
+/* ============ bento ============ */
+.bento{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px}
+.card{
+  position:relative;display:flex;flex-direction:column;padding:26px 24px;border-radius:20px;border:1px solid var(--line-2);
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));
+  overflow:hidden;transition:transform .5s var(--ease),border-color .4s;isolation:isolate;
+}
+.card::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;z-index:-1;opacity:0;transition:opacity .4s;
+  background:radial-gradient(320px circle at var(--mx,50%) var(--my,50%),rgba(104,105,249,.22),transparent 62%);
+}
+.card:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.17)}
+.card:hover::before{opacity:1}
+.card .ic{
+  width:38px;height:38px;border-radius:11px;display:grid;place-items:center;margin-bottom:20px;
+  background:linear-gradient(155deg,rgba(107,92,250,.58),rgba(104,105,249,.34) 45%,rgba(62,169,246,.34));
+  border:1px solid rgba(176,170,255,.26);color:#e8e6ff;
+  box-shadow:0 8px 22px -8px rgba(104,105,249,.9),inset 0 1px 0 rgba(255,255,255,.2);
+}
+.card .ic svg{width:19px;height:19px}
+.card h3{margin-bottom:8px}
+.card p{font-size:13.2px;line-height:1.68;color:var(--mute)}
+.card .mini{margin-top:auto;padding-top:20px;display:flex;gap:6px;flex-wrap:wrap}
+.card .mini span{
+  font-size:10px;padding:4px 8px;border-radius:7px;background:rgba(255,255,255,.045);color:var(--mute-2);
+  border:1px solid var(--line-2);letter-spacing:.06em;font-weight:600;font-variant-numeric:tabular-nums;transition:.3s;
+}
+.card:hover .mini span{color:var(--ink-2);border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.075)}
+
+/* ============ stack ============ */
+.stack{position:relative;margin-top:56px}
+.scard{
+  position:sticky;top:12vh;margin-bottom:34px;
+  display:grid;grid-template-columns:1fr 1.15fr;gap:clamp(24px,4vw,54px);align-items:center;
+  padding:clamp(24px,3vw,40px);border-radius:26px;
+  background:linear-gradient(160deg,rgba(255,255,255,.075),rgba(255,255,255,.02));
+  border:1px solid var(--line);
+  box-shadow:0 40px 100px -40px rgba(0,0,0,1),inset 0 1px 0 rgba(255,255,255,.07);
+  transform-origin:top center;
+  transform:scale(calc(1 - var(--p,0) * .05)) translateY(calc(var(--p,0) * -10px));
+  transition:transform .15s linear;
+}
+.scard::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:rgba(7,7,10,.55);opacity:calc(var(--p,0) * .9);transition:opacity .15s linear;
+}
+.scard .st{padding-left:6px;position:relative;z-index:1}
+.scard .st h3{font-size:clamp(19px,2.2vw,25px);letter-spacing:-.025em;margin-bottom:12px;font-weight:600}
+.scard .st p{font-size:13.8px;line-height:1.75;color:var(--mute)}
+.scard .st .k{display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute-2);margin-bottom:16px;font-weight:600}
+.scard .st .k i{width:5px;height:5px;border-radius:50%;background:var(--a2);box-shadow:0 0 8px var(--a2)}
+.mock{
+  position:relative;border-radius:14px;overflow:hidden;background:#fff;
+  box-shadow:0 30px 70px -25px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.13),0 0 60px -18px rgba(104,105,249,.45);
+  z-index:1;
+}
+
+/* preview mock */
+.pv{display:grid;grid-template-columns:1.05fr .95fr;min-height:230px}
+.pv-img{
+  position:relative;background:
+    radial-gradient(circle at 26% 22%,#ffe0b0,transparent 52%),
+    radial-gradient(circle at 74% 70%,#7fd8d0,transparent 55%),
+    linear-gradient(150deg,#123043,#2c6b70 42%,#b98a5e 76%,#f4c98d);
+}
+.pv-img::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(200deg,rgba(255,255,255,.16),transparent 45%);
+}
+.pv-meta{padding:16px 16px 14px;display:flex;flex-direction:column;gap:0;border-left:1px solid #f0f0f5}
+.pv-meta .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #f4f4f8;font-size:10.5px}
+.pv-meta .row span{color:#8b8f9b}
+.pv-meta .row b{color:#2b2b34;font-weight:600;font-variant-numeric:tabular-nums}
+.pv-meta .tags{display:flex;gap:5px;margin-top:12px;flex-wrap:wrap}
+.pv-meta .tags i{width:9px;height:9px;border-radius:50%;display:block;font-style:normal}
+.pv-meta .tags em{font-style:normal;font-size:9px;color:#8b8f9b;display:flex;align-items:center;gap:4px;background:#f4f4f8;padding:2px 6px;border-radius:5px}
+
+/* space mock */
+.sp{padding:18px}
+.sp-top{display:flex;align-items:center;gap:16px;padding-bottom:14px;border-bottom:1px solid #f2f2f6}
+.ringwrap{position:relative;width:96px;height:96px;flex:none}
+.ringwrap .ring{width:96px;height:96px;transform:rotate(-90deg)}
+.ringwrap circle{fill:none;stroke-width:11}
+.ringwrap .rt{stroke:#f0f0f5}
+.ringwrap .r1{stroke:#6869f9;stroke-dasharray:110.8 264;stroke-dashoffset:0}
+.ringwrap .r2{stroke:#3ea9f6;stroke-dasharray:60.7 264;stroke-dashoffset:-110.8}
+.ringwrap .r3{stroke:#9d8dff;stroke-dasharray:34.3 264;stroke-dashoffset:-171.5}
+.ringwrap .rtx{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.ringwrap .rtx b{display:block;font-size:15px;font-weight:700;color:#14141a;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.ringwrap .rtx small{font-size:8.5px;color:#9aa0ac}
+.sp-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px}
+.lg{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#2b2b34}
+.lg i{width:7px;height:7px;border-radius:2px;flex:none}
+.lg span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg b{font-variant-numeric:tabular-nums;color:#6f7480;font-weight:600}
+.sp-list{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.sl{display:flex;align-items:center;gap:8px;font-size:10.5px;color:#2b2b34}
+.sl span{width:66px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sl .bar{flex:1;height:5px;border-radius:3px;background:#f0f0f5;overflow:hidden}
+.sl .bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#6869f9,#3ea9f6);width:0;transition:width 1.4s var(--ease) .3s}
+.in .sl .bar i{width:var(--w)}
+.sl b{width:34px;text-align:right;font-variant-numeric:tabular-nums;color:#6f7480;font-weight:600;flex:none}
+
+/* search mock */
+.se{margin:0;padding:16px}
+.se-box{display:flex;align-items:center;gap:8px;height:32px;padding:0 11px;border-radius:9px;background:#f4f4f8;border:1px solid #ececf1}
+.se-box svg{width:12px;height:12px;color:#9aa0ac;flex:none}
+.se-box .q{flex:1;font-size:11px;color:#2b2b34}
+.se-box .q::after{content:"";display:inline-block;width:1px;height:11px;background:#6869f9;margin-left:1px;vertical-align:-1px;animation:caret 1.1s steps(1) infinite}
+@keyframes caret{0%,50%{opacity:1}51%,100%{opacity:0}}
+.se-box .scope{font-size:9px;color:#6f7480;background:#fff;border:1px solid #e6e6ec;border-radius:5px;padding:2px 6px;flex:none}
+.se-res{margin-top:10px;display:flex;flex-direction:column;gap:2px}
+.se-r{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;font-size:10.5px}
+.se-r:nth-child(1){background:rgba(104,105,249,.09)}
+.se-r .fi{width:16px;height:16px;border-radius:4px;font-size:5px}
+.se-r .nm{color:#2b2b34;font-weight:600;flex:none}
+.se-r .pt{color:#9aa0ac;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.se-tags{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
+.se-tags em{font-style:normal;font-size:9px;color:#5c5df0;background:#eeecff;padding:3px 7px;border-radius:5px}
+
+/* bench mock */
+.bn{padding:18px}
+.bn table{width:100%;border-collapse:collapse;font-size:10.5px}
+.bn th{font-weight:600;color:#8b8f9b;font-size:9.5px;text-align:right;padding:0 0 10px;border-bottom:1px solid #f0f0f5}
+.bn th:first-child{text-align:left}
+.bn th.hl{color:#6869f9}
+.bn td{padding:9px 0;border-bottom:1px solid #f6f6fa;text-align:right;color:#9aa0ac;font-variant-numeric:tabular-nums}
+.bn td:first-child{text-align:left;color:#2b2b34}
+.bn td.hl{color:#14141a;font-weight:700}
+.bn td.hl em{font-style:normal;color:#6869f9}
+.bn tr:last-child td{border-bottom:0}
+.bn .note{margin-top:10px;font-size:8.5px;line-height:1.5;color:#a6a9b3}
+
+/* ============ safety ============ */
+.safety{display:grid;grid-template-columns:1.05fr 1fr;gap:clamp(36px,6vw,80px);align-items:center}
+.slist{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.sitem{padding:22px 20px;border-radius:16px;border:1px solid var(--line-2);background:rgba(255,255,255,.028);transition:.4s var(--ease)}
+.sitem:hover{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.14);transform:translateY(-3px)}
+.sitem .ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;margin-bottom:14px;background:rgba(61,220,132,.12);color:var(--ok);border:1px solid rgba(61,220,132,.18)}
+.sitem .ic svg{width:16px;height:16px}
+.sitem b{display:block;font-size:14px;font-weight:600;margin-bottom:6px;letter-spacing:-.01em}
+.sitem p{font-size:12.5px;line-height:1.62;color:var(--mute)}
+
+/* ============ install ============ */
+.install{display:grid;grid-template-columns:1fr 1fr;gap:clamp(36px,6vw,70px);align-items:center}
+.steps3{counter-reset:s;list-style:none;margin-top:34px}
+.steps3 li{counter-increment:s;position:relative;padding:0 0 24px 46px;font-size:14px;line-height:1.72;color:var(--ink-2)}
+.steps3 li:not(:last-child)::before{content:"";position:absolute;left:13px;top:28px;bottom:0;width:1px;background:linear-gradient(180deg,var(--line),transparent)}
+.steps3 li::after{
+  content:counter(s);position:absolute;left:0;top:-2px;width:27px;height:27px;border-radius:50%;
+  display:grid;place-items:center;font-size:12px;font-weight:650;color:var(--ink);
+  background:rgba(255,255,255,.06);border:1px solid var(--line);
+}
+.steps3 li:last-child{padding-bottom:0}
+.codebox{margin-top:16px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:#0c0c12;box-shadow:0 20px 50px -25px rgba(0,0,0,.9);position:relative}
+.codebox .cb-bar{display:flex;align-items:center;gap:6px;padding:9px 13px;border-bottom:1px solid var(--line-2);background:rgba(255,255,255,.025)}
+.codebox .cb-bar i{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.14)}
+.codebox .cb-bar span{margin-left:auto;font-size:10.5px;color:var(--mute-2);letter-spacing:.06em}
+.codebox pre{padding:14px 58px 14px 15px;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.75;color:#b9b9cc;white-space:pre-wrap;overflow-wrap:anywhere}
+.codebox pre .s{color:#9ce8b8}
+.copy{position:absolute;right:10px;bottom:10px;font:inherit;font-size:10.5px;padding:5px 10px;border-radius:7px;background:rgba(255,255,255,.08);border:1px solid var(--line);color:var(--mute);cursor:pointer;transition:.25s}
+.copy:hover{background:rgba(255,255,255,.15);color:var(--ink)}
+
+/* ============ final ============ */
+.final{text-align:center;padding:clamp(96px,12vw,180px) 0 clamp(80px,9vw,130px);position:relative;overflow:hidden}
+.final::before{
+  content:"";position:absolute;left:50%;top:44%;width:min(900px,120vw);height:520px;transform:translate(-50%,-50%);
+  background:radial-gradient(ellipse at center,rgba(104,105,249,.30),rgba(62,169,246,.1) 42%,transparent 70%);
+  filter:blur(50px);pointer-events:none;
+}
+.final .wrap{position:relative}
+.final h2{font-size:clamp(32px,5.6vw,64px);letter-spacing:-.045em;line-height:1.06}
+.final .lead{margin:24px auto 0;max-width:520px}
+.final .hero-cta{margin-top:36px}
+.appicon{width:82px;height:82px;border-radius:20px;margin:0 auto 34px;display:block;box-shadow:0 22px 50px -16px rgba(104,105,249,.85),0 0 0 1px rgba(255,255,255,.12)}
+
+/* ============ footer ============ */
+footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34px 0 44px}
+.foot{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--mute-2)}
+.foot nav{display:flex;gap:22px}
+.foot a{transition:color .25s}
+.foot a:hover{color:var(--ink)}
+.foot .fb{display:flex;align-items:center;gap:8px}
+.foot .fb img{width:18px;height:18px;border-radius:5px;opacity:.85}
+
+/* ============ responsive ============ */
+@media(max-width:1000px){
+  .bento{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:880px){
+  .navlinks{display:none}
+  .core,.safety,.install{grid-template-columns:1fr}
+  .core .panel{order:-1}
+  .vs{grid-template-columns:1fr;gap:16px}
+  .vs::after{display:none}
+  .scard{position:static;transform:none!important;grid-template-columns:1fr;margin-bottom:22px}
+  .scard::after{display:none}
+  .scard .mock{order:-1}
+  .cards3{grid-template-columns:1fr}
+  .chip{right:6px;top:-20px;transform:scale(.9);transform-origin:right top}
+  .chip2{display:none}
+  .slist{grid-template-columns:1fr}
+  .pv{grid-template-columns:1fr}
+  .pv-img{min-height:150px}
+  .pv-meta{border-left:0;border-top:1px solid #f0f0f5}
+}
+@media(max-width:640px){
+  .bento{grid-template-columns:1fr}
+  .hero{padding-top:112px}
+  .brand span{display:none}
+  .foot{flex-direction:column;align-items:flex-start;gap:16px}
+  .panes{grid-template-columns:1fr}
+  .divider{display:none}
+  .pane + .pane{border-top:6px solid #f4f4f7}
+  .flow{grid-template-columns:1fr}
+  .flow-mid{height:34px}
+  .flow-chip{display:none}
+}
 </style>
 </head>
 <body>
+
+<div class="ambient" aria-hidden="true">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+  <div class="blob b4"></div>
+</div>
+<div class="grid-bg" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="progress" id="prog" aria-hidden="true"></div>
+
 <header id="hd">
-  <a class="brand" href="#"><img src="icon.png" alt=""><span data-i="name"></span></a>
+  <a class="brand" href="#top"><img src="icon.png" alt="文件管家"><span data-i="name">文件管家</span></a>
+  <nav class="navlinks">
+    <a href="#problem" data-i="nav_why">为什么</a>
+    <a href="#core" data-i="nav_core">核心功能</a>
+    <a href="#features" data-i="nav_fn">全部功能</a>
+    <a href="#safe" data-i="nav_safe">安全性</a>
+  </nav>
   <div class="right">
     <div class="lang"><button data-l="zh">中文</button><button data-l="en">EN</button></div>
-    <a class="pill blue sm" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dl"></a>
+    <a class="btn btn-primary btn-sm" href="https://github.com/yostyang/file-butler/releases/latest" data-i="nav_dl">下载</a>
   </div>
 </header>
-<div class="hero">
-  <img class="logo" src="icon.png" alt="">
-  <h1><span data-i="h1a"></span><br><span data-i="h1b"></span> <span class="rot" id="rot"><span></span></span> <span data-i="h1c"></span></h1>
-  <p data-i="sub"></p>
-  <div class="cta">
-    <a class="pill blue" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dlfree"></a>
-    <small data-i="meta"></small>
-  </div>
-</div>
-<a class="pill light more" id="more" href="#story"><span data-i="more"></span> ↓</a>
 
-<section class="g" id="story">
-  <div class="story reveal">
-    <h2 data-i="whyT"></h2>
-    <p data-i="why1"></p>
-    <p class="big" data-i="why2"></p>
-    <p data-i="why3"></p>
-  </div>
-</section>
+<main id="top">
 
-<section>
-  <div class="inner row reveal">
-    <div class="txt"><h2 data-i="f1T"></h2><p class="lead" data-i="f1D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <div class="panes">
-        <div class="pane act"><div class="tabs"><span class="on" data-i="u_home"></span><span>Projects</span></div>
-          <div class="fr"><i class="fi d"></i>Desktop</div><div class="fr sel"><i class="fi"></i>report.pdf</div><div class="fr"><i class="fi"></i>notes.md</div><div class="fr"><i class="fi d"></i>Photos</div></div>
-        <div class="pane"><div class="tabs"><span class="on" data-i="u_dl"></span></div>
-          <div class="fr"><i class="fi"></i>setup.dmg</div><div class="fr"><i class="fi"></i>photo.heic</div><div class="fr"><i class="fi d"></i>Archive</div></div>
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="badge rise" style="--d:.05s"><span class="led"></span><span><b data-i="badge_b">开源 · 免费</b> · <span data-i="badge_a">约 3 MB</span></span></div>
+      <h1>
+        <span class="line rise" style="--d:.12s" data-i="h1a">比访达更顺手，</span>
+        <span class="line rise" style="--d:.2s"><span data-i="h1b">轻松管理</span> <span class="rot" id="rot"><span>文件</span></span></span>
+      </h1>
+      <p class="sub rise" style="--d:.3s" data-i="sub">双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少，占用却更低。</p>
+      <div class="hero-cta rise" style="--d:.38s">
+        <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
+          免费下载
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="#core" data-i="cta2">看看它能做什么</a>
       </div>
-      <div style="text-align:right;margin-top:10px"><span class="pill light sm" data-i="u_copy"></span></div>
-    </div><p class="note" data-i="illus"></p></div></div>
-  </div>
-</section>
+      <div class="hero-meta rise" style="--d:.46s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 约 3 MB <i>·</i> 开源免费</div>
+    </div>
 
-<section class="g">
-  <div class="inner row rev reveal">
-    <div class="txt"><h2 data-i="f2T"></h2><p class="lead" data-i="f2D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <div class="seg"><i class="on">▦</i><i>☰</i><i>⫴</i><i>▭</i></div>
-      <div class="grid"><div></div><div class="s"></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
-    </div><p class="note" data-i="illus"></p></div></div>
-  </div>
-</section>
+    <div class="hero-visual rise" style="--d:.5s">
+      <div class="hv-glow"></div>
+      <div class="float">
+        <div class="tilt" id="tilt">
+          <div class="chip">
+            <span class="bars"><i></i><i></i><i></i><i></i><i></i></span>
+            <span data-i="chip_cpu">空闲 CPU</span> <b>0%</b>
+            <span style="opacity:.35">|</span>
+            <span><b>63</b> MB</span>
+          </div>
+          <div class="chip2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+            <span data-i="chip2">已拷贝 1 项</span>
+          </div>
 
-<section>
-  <div class="inner row reveal">
-    <div class="txt"><h2 data-i="f3T"></h2><p class="lead" data-i="f3D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <div class="pv"></div>
-      <div class="kv"><span data-i="u_kind"></span><b data-i="u_png"></b></div>
-      <div class="kv"><span data-i="u_dim"></span><b>3024 × 1964</b></div>
-      <div class="kv"><span data-i="u_size"></span><b>4.2 MB</b></div>
-      <div class="kv"><span data-i="u_tags"></span><b><i class="td" style="background:#ef4444"></i><i class="td" style="background:#3b82f6"></i></b></div>
-    </div><p class="note" data-i="illus"></p></div></div>
-  </div>
-</section>
+          <div class="win">
+            <div class="win-bar"><i></i><i></i><i></i><span class="win-title" data-i="win_title">文件管家</span></div>
+            <div class="tabs">
+              <span class="tab on" data-i="tab1">项目</span>
+              <span class="tab" data-i="tab2">个人</span>
+              <span class="tab add">+</span>
+            </div>
+            <div class="panes">
+              <div class="pane">
+                <div class="pane-head"><b data-i="pane1">Projects</b><span class="sep">›</span><span data-i="pane1b">设计稿</span></div>
+                <div class="frow sel" style="animation-delay:.85s"><span class="fi folder"></span><span class="fn">Archive</span><span class="fs">—</span></div>
+                <div class="frow" style="animation-delay:.93s"><span class="fi pdf">PDF</span><span class="fn">report.pdf</span><span class="fs">2.4 MB</span></div>
+                <div class="frow" style="animation-delay:1.01s"><span class="fi md">MD</span><span class="fn">notes.md</span><span class="fs">18 KB</span></div>
+                <div class="frow" style="animation-delay:1.09s"><span class="fi png">PNG</span><span class="fn">cover@2x.png</span><span class="fs">4.2 MB</span></div>
+                <div class="frow" style="animation-delay:1.17s"><span class="fi num">NUM</span><span class="fn">budget.numbers</span><span class="fs">1.1 MB</span></div>
+              </div>
+              <div class="divider"><span class="f5">F5</span></div>
+              <div class="pane">
+                <div class="pane-head"><b data-i="pane2">下载</b><span class="sep">›</span><span data-i="pane2b">全部</span></div>
+                <div class="frow" style="animation-delay:1.0s"><span class="fi dmg">DMG</span><span class="fn">setup.dmg</span><span class="fs">86 MB</span></div>
+                <div class="frow" style="animation-delay:1.08s"><span class="fi heic">HEIC</span><span class="fn">photo.heic</span><span class="fs">3.8 MB</span></div>
+                <div class="frow" style="animation-delay:1.16s"><span class="fi zip">ZIP</span><span class="fn">assets.zip</span><span class="fs">12 MB</span></div>
+                <div class="frow" style="animation-delay:1.24s"><span class="fi doc">DOC</span><span class="fn">invoice.docx</span><span class="fs">44 KB</span></div>
+                <div class="frow" style="animation-delay:1.32s"><span class="fi pdf">PDF</span><span class="fn">manual.pdf</span><span class="fs">9.6 MB</span></div>
+              </div>
+            </div>
+            <div class="win-status">
+              <span data-i="status_l">2 个标签页 · 12 项 · 选中 1 项</span>
+              <span class="k"><kbd>Tab</kbd> <span data-i="status_k1">切换</span> <kbd>F5</kbd> <span data-i="status_k2">拷贝</span> <kbd>F6</kbd> <span data-i="status_k3">移动</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-<section class="g">
-  <div class="inner row rev reveal">
-    <div class="txt"><h2 data-i="f4T"></h2><p class="lead" data-i="f4D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <div class="h"><span>🔍 invoice</span><span class="tag" data-i="u_scope"></span></div>
-      <div class="it"><i class="dot ok"></i><em>invoice-2026-09.pdf<small>~/Documents/Finance</small></em></div>
-      <div class="it"><i class="dot ok"></i><em>invoice-template.docx<small>~/Desktop</small></em></div>
-      <div class="it"><i class="dot ok"></i><em>invoices.numbers<small>~/Library/Mobile Documents</small></em></div>
-    </div><p class="note" data-i="illus"></p></div></div>
-  </div>
-</section>
+    <div class="scroll-hint"><span data-i="scroll">往下看</span><span class="bar"></span></div>
+  </section>
 
-<section>
-  <div class="inner row reveal">
-    <div class="txt"><h2 data-i="f5T"></h2><p class="lead" data-i="f5D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <div class="h"><span data-i="u_space"></span><span class="tag">128 GB</span></div>
-      <div class="it"><em>Movies</em><div class="bar" style="width:45%"><i style="width:100%"></i></div><small style="width:40px;text-align:right">42%</small></div>
-      <div class="it"><em>Library</em><div class="bar" style="width:45%"><i style="width:55%"></i></div><small style="width:40px;text-align:right">23%</small></div>
-      <div class="it"><em>Downloads</em><div class="bar" style="width:45%"><i style="width:30%"></i></div><small style="width:40px;text-align:right">13%</small></div>
-    </div><p class="note" data-i="illus"></p></div></div>
+  <!-- ============ MARQUEE ============ -->
+  <div class="marquee" aria-hidden="true">
+    <div class="mq-track" id="mq">
+      <div class="mq-item"><b data-i="m1">双栏并排</b></div>
+      <div class="mq-item"><b data-i="m2">多标签页</b></div>
+      <div class="mq-item"><b data-i="m3">图标 / 列表 / 分栏 / 画廊</b></div>
+      <div class="mq-item"><b data-i="m4">实时预览栏</b></div>
+      <div class="mq-item"><b data-i="m5">访达标签互通</b></div>
+      <div class="mq-item"><b data-i="m6">Spotlight 搜索</b></div>
+      <div class="mq-item"><b data-i="m7">空间分析环形图</b></div>
+      <div class="mq-item"><b data-i="m8">空闲 0% CPU</b></div>
+    </div>
   </div>
-</section>
 
-<section class="g">
-  <div class="inner row rev reveal">
-    <div class="txt"><h2 data-i="f6T"></h2><p class="lead" data-i="f6D"></p></div>
-    <div class="media"><div style="width:100%"><div class="ui">
-      <table class="cmp">
-        <tr><th></th><th data-i="u_fb"></th><th>Finder</th></tr>
-        <tr><td data-i="u_icpu"></td><td><b>0%</b></td><td>0.6–0.9%</td></tr>
-        <tr><td data-i="u_imem"></td><td><b>63 MB</b></td><td>181 MB*</td></tr>
-        <tr><td data-i="u_wake"></td><td><b>0</b></td><td>~1000</td></tr>
-        <tr><td data-i="u_load"></td><td colspan="2"><b data-i="u_loadv"></b></td></tr>
-      </table>
-      <p class="note" data-i="u_star"></p>
-    </div></div></div>
-  </div>
-</section>
+  <!-- ============ PROBLEM ============ -->
+  <section id="problem">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <div class="eyebrow"><span class="dotp"></span><span data-i="pb_eb">问题</span></div>
+        <h2 data-i="pb_h2">访达够用，但整理大量文件时总差一点</h2>
+        <p class="lead" data-i="pb_p">访达做完了它该做的事。可当你手里有几千个文件要归位时，那"差一点"就会被无限放大——每挪一个文件，都要多切一次窗口。</p>
+      </div>
+      <div class="cards3">
+        <div class="pcard rv" style="--d:.05s">
+          <span class="num"><em>01</em> / <span data-i="pb_c1n">少一栏</span></span>
+          <h3 data-i="pb_c1t">没有双栏，只能来回切窗口</h3>
+          <p data-i="pb_c1d">要把文件从 A 挪到 B，得开两个访达窗口，拖过去，再切回来。文件一多，光找窗口就够烦的。</p>
+        </div>
+        <div class="pcard rv" style="--d:.13s">
+          <span class="num"><em>02</em> / <span data-i="pb_c2n">多一个 App</span></span>
+          <h3 data-i="pb_c2t">想看清磁盘，还得再装一个工具</h3>
+          <p data-i="pb_c2d">哪个文件夹最占空间？访达只会给你一个"关于本机"的粗略数字，想知道细节，得另找空间分析软件。</p>
+        </div>
+        <div class="pcard rv" style="--d:.21s">
+          <span class="num"><em>03</em> / <span data-i="pb_c3n">二选一</span></span>
+          <h3 data-i="pb_c3t">要么忍，要么背一个重软件</h3>
+          <p data-i="pb_c3d">Path Finder 那样的效率确实好用，但为了多一个双栏，就常驻一个吃内存、还在后台反复唤醒的大应用，不划算。</p>
+        </div>
+      </div>
+      <p class="quote rv" style="--d:.1s" data-i="pb_q">想要 Path Finder 的效率，又不想多一个吃资源的大软件。<span data-i="pb_q2">于是有了文件管家。</span></p>
+    </div>
+  </section>
 
-<section>
-  <div class="inner list reveal">
-    <div><h2 data-i="safeT"></h2><p class="lead" data-i="safeD"></p></div>
-    <ul>
-      <li><span class="ic">🗑</span><div><b data-i="s1"></b><p data-i="s1d"></p></div></li>
-      <li><span class="ic">↩︎</span><div><b data-i="s2"></b><p data-i="s2d"></p></div></li>
-      <li><span class="ic">🔑</span><div><b data-i="s3"></b><p data-i="s3d"></p></div></li>
-      <li><span class="ic">⌥</span><div><b data-i="s4"></b><p data-i="s4d"></p></div></li>
-    </ul>
-  </div>
-</section>
+  <!-- ============ VS ============ -->
+  <section class="vs-band">
+    <div class="wrap">
+      <div class="vs">
+        <div class="vs-card old rv">
+          <span class="vs-tag" data-i="vs_ot">访达 + 一堆工具</span>
+          <h3 data-i="vs_oh">能做完，但每一步都多绕一圈</h3>
+          <ul>
+            <li><i>×</i><span data-i="vs_o1">拖文件要开两个窗口，来回切换</span></li>
+            <li><i>×</i><span data-i="vs_o2">查磁盘占用，另装一个 App</span></li>
+            <li><i>×</i><span data-i="vs_o3">换视图要翻菜单，每个窗口都要重设</span></li>
+            <li><i>×</i><span data-i="vs_o4">想批量整理，基本靠手动</span></li>
+          </ul>
+        </div>
+        <div class="vs-card new rv" style="--d:.1s">
+          <span class="vs-tag" data-i="vs_nt">文件管家</span>
+          <h3 data-i="vs_nh">一个窗口，把该做的都做完</h3>
+          <ul>
+            <li><i>✓</i><span data-i="vs_n1">双栏并排，F5 直接拷到对面</span></li>
+            <li><i>✓</i><span data-i="vs_n2">空间分析内置，环形图一眼看清</span></li>
+            <li><i>✓</i><span data-i="vs_n3">⌘1–⌘4 秒切四种视图，每个标签页各自记住</span></li>
+            <li><i>✓</i><span data-i="vs_n4">重命名、移动、删除都能 ⌘Z 撤销</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<section class="g">
-  <div class="inner center reveal">
-    <h2 data-i="insT"></h2>
-    <ol class="steps">
-      <li data-i="i1"></li>
-      <li data-i="i2"></li>
-      <li><span data-i="i3"></span><br><code>xattr -dr com.apple.quarantine "/Applications/文件管家.app"</code></li>
-    </ol>
-  </div>
-</section>
+  <!-- ============ CORE ============ -->
+  <section id="core">
+    <div class="wrap">
+      <div class="core">
+        <div class="rv">
+          <div class="eyebrow"><span class="dotp"></span><span data-i="co_eb">核心功能</span></div>
+          <h2 data-i="co_h2">双栏 + 标签页，<br>整理文件快一倍</h2>
+          <p class="lead" data-i="co_p">左右两栏各自浏览，每栏都能开多个标签页。按 Tab 切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。</p>
+          <div class="steps">
+            <div class="step"><span class="n">1</span><div><b data-i="co_s1t">开两栏</b><p data-i="co_s1d">左右并排，各有独立的路径和标签页，互不干扰。</p></div></div>
+            <div class="step"><span class="n">2</span><div><b data-i="co_s2t">选中</b><p data-i="co_s2d">点一下或用方向键，支持多选；Tab 在两栏之间切换焦点。</p></div></div>
+            <div class="step"><span class="n">3</span><div><b data-i="co_s3t">一键搬</b><p data-i="co_s3d">F5 拷贝、F6 移动，或者直接拖过去——包括拖进访达。</p></div></div>
+          </div>
+        </div>
+        <div class="panel rv" style="--d:.1s">
+          <div class="shine-line"></div>
+          <div class="flow">
+            <div class="fpane">
+              <div class="mh"><b data-i="fp1">Projects</b></div>
+              <div class="mr sel"><span class="fi pdf"></span><span>report.pdf</span></div>
+              <div class="mr"><span class="fi md"></span><span>notes.md</span></div>
+              <div class="mr"><span class="fi png"></span><span>cover@2x.png</span></div>
+            </div>
+            <div class="flow-mid"><span>F5</span></div>
+            <div class="fpane">
+              <div class="mh"><b data-i="fp2">下载</b></div>
+              <div class="mr"><span class="fi dmg"></span><span>setup.dmg</span></div>
+              <div class="mr"><span class="fi heic"></span><span>photo.heic</span></div>
+              <div class="mr new"><span class="fi pdf"></span><span>report.pdf</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<section class="final center">
-  <div class="reveal">
-    <h2 data-i="endT"></h2>
-    <p class="lead" data-i="endD"></p>
-    <a class="pill blue" href="https://github.com/yostyang/file-butler/releases/latest" data-i="dlfree"></a>
-  </div>
-</section>
+  <!-- ============ BENTO ============ -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head center rv">
+        <div class="eyebrow"><span class="dotp"></span><span data-i="bt_eb">全部功能</span></div>
+        <h2 data-i="bt_h2">该有的都有，<br><span class="grad-text">不该有的一个没有</span></h2>
+        <p class="lead" data-i="bt_p">访达里你常用的那些，这里都在；再加上几个它一直没做的。</p>
+      </div>
+      <div class="bento">
+        <div class="card rv" style="--d:.02s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></svg></div>
+          <h3 data-i="f1t">四种显示方式</h3>
+          <p data-i="f1d">图标、列表、分栏、画廊，⌘1 到 ⌘4 一键切换。每个标签页单独记住自己用哪种，不用反复重设。</p>
+          <div class="mini"><span>⌘1</span><span>⌘2</span><span>⌘3</span><span>⌘4</span></div>
+        </div>
+        <div class="card rv" style="--d:.06s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14 4v16"/><path d="M17 9h1M17 13h1"/></svg></div>
+          <h3 data-i="f2t">预览栏</h3>
+          <p data-i="f2d">⇧⌘P 打开右侧预览，图片、PDF、视频、文本代码、Office 文档都能直接看，下面列出尺寸、时长、大小和标签。</p>
+          <div class="mini"><span>⇧⌘P</span><span>Quick Look</span></div>
+        </div>
+        <div class="card rv" style="--d:.1s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></div>
+          <h3 data-i="f3t">即时搜索</h3>
+          <p data-i="f3d">⌘F 输入就实时过滤当前文件夹，也能切到「包括子文件夹」或「整台 Mac」，用 Spotlight 索引搜。</p>
+          <div class="mini"><span>⌘F</span><span>Spotlight</span></div>
+        </div>
+        <div class="card rv" style="--d:.02s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3.8a2 2 0 00-1.4-.6H4.5a1.7 1.7 0 00-1.7 1.7v5.1c0 .5.2 1 .6 1.4l9.6 9.6a2 2 0 002.8 0l4.8-4.8a2 2 0 000-2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></div>
+          <h3 data-i="f4t">访达标签互通</h3>
+          <p data-i="f4d">访达里的标签在这儿一样能看、能改，侧边栏点一下，就列出带这个标签的所有文件。</p>
+          <div class="mini"><span>Finder Tags</span><span>Sidebar</span></div>
+        </div>
+        <div class="card rv" style="--d:.06s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2a8.8 8.8 0 108.8 8.8"/><path d="M12 12l6.2-6.2"/><path d="M20.8 12A8.8 8.8 0 0012 3.2V12z" fill="currentColor" stroke="none" opacity=".5"/></svg></div>
+          <h3 data-i="f5t">空间分析</h3>
+          <p data-i="f5d">一键统计当前文件夹的占用，环形图配排行列表，可以一层层点进去，看到大文件直接定位或移到废纸篓。</p>
+          <div class="mini"><span>Ring</span><span>Drill-down</span></div>
+        </div>
+        <div class="card rv" style="--d:.1s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg></div>
+          <h3 data-i="f6t">分组与排序</h3>
+          <p data-i="f6d">按种类、日期、大小或标签分组，排序方式随时调整。文件多的文件夹，一眼就能扫完。</p>
+          <div class="mini"><span>Kind</span><span>Date</span><span>Size</span><span>Tag</span></div>
+        </div>
+        <div class="card rv" style="--d:.02s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7 14h10"/></svg></div>
+          <h3 data-i="f7t">键盘优先</h3>
+          <p data-i="f7d">Tab 切栏、F5 拷贝、F6 移动、⌘1–⌘4 换视图、⇧⌘P 预览、⌘F 搜索、⌘Z 撤销。手不用离开键盘。</p>
+          <div class="mini"><span>Tab</span><span>F5</span><span>F6</span><span>⌘Z</span></div>
+        </div>
+        <div class="card rv" style="--d:.06s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9a3 3 0 010 6H6"/><path d="M9 16l-3-3 3-3"/><path d="M20 17H11"/></svg></div>
+          <h3 data-i="f8t">和访达互通</h3>
+          <p data-i="f8d">两栏之间可以拖，和访达之间也可以拖。标签、文件类型、图标全都沿用系统的那一套。</p>
+          <div class="mini"><span>Drag &amp; Drop</span><span>Native</span></div>
+        </div>
+        <div class="card rv" style="--d:.1s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.5L5 13h6l-1 8.5 8-11.5h-6l1-8z"/></svg></div>
+          <h3 data-i="f9t">原生轻量</h3>
+          <p data-i="f9d">Swift 编写，只为 Apple 芯片和 Intel 各编译一次。空闲时 CPU 0%、没有后台唤醒，内存约 63 MB。</p>
+          <div class="mini"><span>Swift</span><span>0% CPU</span><span>63 MB</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<footer>
-  <span>© 2026 <a href="https://github.com/yostyang">@yostyang</a></span>
-  <nav><a href="https://github.com/yostyang/file-butler">GitHub</a><a href="https://github.com/yostyang/file-butler/releases" data-i="rel"></a><a href="https://yostyang.github.io/mac-optimizer/" data-i="sib"></a></nav>
-  <span data-i="made"></span>
-</footer>
+  <!-- ============ STACK ============ -->
+  <section id="gallery">
+    <div class="wrap">
+      <div class="sec-head center rv">
+        <div class="eyebrow"><span class="dotp"></span><span data-i="st_eb">细节</span></div>
+        <h2 data-i="st_h2">四个用起来才知道好的地方</h2>
+        <p class="lead" data-i="st_p">下面都是应用里真实存在的界面结构，不是概念图。</p>
+      </div>
+      <div class="stack" id="stack">
+
+        <article class="scard">
+          <div class="st">
+            <div class="k"><i></i><span data-i="s1k">预览栏</span></div>
+            <h3 data-i="s1t">不打开，也能看清里面是什么</h3>
+            <p data-i="s1d">选中文件，右侧立刻出现预览：图片、PDF、视频、文本代码和 Office 文档都支持，下面还带着尺寸、时长、大小和标签。想全屏看就按空格。</p>
+          </div>
+          <div class="mock rv">
+            <div class="pv">
+              <div class="pv-img"></div>
+              <div class="pv-meta">
+                <div class="row"><span data-i="u_kind">种类</span><b data-i="u_png">PNG 图像</b></div>
+                <div class="row"><span data-i="u_dim">尺寸</span><b>3024 × 1964</b></div>
+                <div class="row"><span data-i="u_size">大小</span><b>4.2 MB</b></div>
+                <div class="row"><span data-i="u_tagl">标签</span><b data-i="u_tagv">设计 · 待定</b></div>
+                <div class="tags">
+                  <em><i style="background:#6869f9"></i><span data-i="u_t1">设计</span></em>
+                  <em><i style="background:#ffb340"></i><span data-i="u_t2">待定</span></em>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scard">
+          <div class="st">
+            <div class="k"><i></i><span data-i="s2k">空间分析</span></div>
+            <h3 data-i="s2t">看看空间到底被谁吃了</h3>
+            <p data-i="s2d">一键测量当前文件夹，环形图配排行列表，可以一层层点进去。看到占地方的大文件，就地定位，或者直接移到废纸篓。</p>
+          </div>
+          <div class="mock rv">
+            <div class="sp">
+              <div class="sp-top">
+                <div class="ringwrap">
+                  <svg class="ring" viewBox="0 0 96 96" aria-hidden="true">
+                    <circle class="rt" cx="48" cy="48" r="42"/>
+                    <circle class="r1" cx="48" cy="48" r="42"/>
+                    <circle class="r2" cx="48" cy="48" r="42"/>
+                    <circle class="r3" cx="48" cy="48" r="42"/>
+                  </svg>
+                  <div class="rtx"><b>128</b><small>GB</small></div>
+                </div>
+                <div class="sp-legend">
+                  <div class="lg"><i style="background:#6869f9"></i><span>Movies</span><b>54 GB</b></div>
+                  <div class="lg"><i style="background:#3ea9f6"></i><span>Library</span><b>29 GB</b></div>
+                  <div class="lg"><i style="background:#9d8dff"></i><span>Downloads</span><b>17 GB</b></div>
+                  <div class="lg"><i style="background:#e6e6ee"></i><span data-i="u_other">其他</span><b>28 GB</b></div>
+                </div>
+              </div>
+              <div class="sp-list">
+                <div class="sl"><span>Movies</span><div class="bar"><i style="--w:100%"></i></div><b>42%</b></div>
+                <div class="sl"><span>Library</span><div class="bar"><i style="--w:54%"></i></div><b>23%</b></div>
+                <div class="sl"><span>Downloads</span><div class="bar"><i style="--w:31%"></i></div><b>13%</b></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scard">
+          <div class="st">
+            <div class="k"><i></i><span data-i="s3k">搜索</span></div>
+            <h3 data-i="s3t">打几个字，就找到那个文件</h3>
+            <p data-i="s3d">⌘F 即时过滤当前文件夹，不够就切到子文件夹或整台 Mac。访达标签也能直接搜，点侧边栏的标签，所有同标签文件一次列出。</p>
+          </div>
+          <div class="mock rv">
+            <div class="se">
+              <div class="se-box">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+                <span class="q">invoice</span>
+                <span class="scope" data-i="u_scope">整台 Mac</span>
+              </div>
+              <div class="se-res">
+                <div class="se-r"><span class="fi pdf"></span><span class="nm">invoice-2026-09.pdf</span><span class="pt">~/Documents/Finance</span></div>
+                <div class="se-r"><span class="fi doc"></span><span class="nm">invoice-template.docx</span><span class="pt">~/Desktop</span></div>
+                <div class="se-r"><span class="fi num"></span><span class="nm">invoices.numbers</span><span class="pt">~/Library/Mobile Documents</span></div>
+              </div>
+              <div class="se-tags">
+                <em data-i="u_t1">设计</em><em data-i="u_t3">财务</em><em data-i="u_t2">待定</em>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scard">
+          <div class="st">
+            <div class="k"><i></i><span data-i="s4k">性能</span></div>
+            <h3 data-i="s4t">轻到你会忘记它在运行</h3>
+            <p data-i="s4d">同一台 Mac 上实测：空闲 CPU 0%，没有后台唤醒，内存约 63 MB。一个有 1 万个文件的文件夹，约 0.27 秒读完。</p>
+          </div>
+          <div class="mock rv">
+            <div class="bn">
+              <table>
+                <tr><th></th><th class="hl" data-i="u_fb">文件管家</th><th>Finder</th></tr>
+                <tr><td data-i="u_icpu">空闲 CPU</td><td class="hl"><em>0%</em></td><td>0.6–0.9%</td></tr>
+                <tr><td data-i="u_imem">内存</td><td class="hl"><em>63 MB</em></td><td>181 MB*</td></tr>
+                <tr><td data-i="u_wake">空闲唤醒</td><td class="hl"><em>0</em></td><td>~1000</td></tr>
+                <tr><td data-i="u_load">读取 1 万个文件</td><td class="hl" colspan="2"><em data-i="u_loadv">约 0.27 秒（v0.2 约 1.5 秒）</em></td></tr>
+              </table>
+              <p class="note" data-i="u_star">* 实测于同一台 Mac。访达的数字包含它负责的桌面和系统工作，仅供参考。</p>
+            </div>
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SAFETY ============ -->
+  <section id="safe">
+    <div class="wrap">
+      <div class="safety">
+        <div class="rv">
+          <div class="eyebrow"><span class="dotp"></span><span data-i="sf_eb">安全性</span></div>
+          <h2 data-i="sf_h2">放心交给它</h2>
+          <p class="lead" data-i="sf_p">文件操作都很保守，出错也能挽回。没有"一键清理"的黑箱，也没有你看不见的后台常驻。</p>
+        </div>
+        <div class="slist">
+          <div class="sitem rv" style="--d:.02s">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1.5 1.5 0 011.5-1.5h3A1.5 1.5 0 0115 5v2"/><path d="M6.5 7l.8 12a2 2 0 002 1.9h5.4a2 2 0 002-1.9L17.5 7"/></svg></div>
+            <b data-i="sf1t">绝不直接删除</b><p data-i="sf1d">删除一律移到废纸篓，不会永久删除。</p>
+          </div>
+          <div class="sitem rv" style="--d:.07s">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h11a5 5 0 010 10H8"/><path d="M8 5L4 9l4 4"/></svg></div>
+            <b data-i="sf2t">操作都能撤销</b><p data-i="sf2d">重命名、移动、拷贝、新建、移到废纸篓都可以用 ⌘Z 撤销。</p>
+          </div>
+          <div class="sitem rv" style="--d:.12s">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="M11 11l9 9M17.5 17.5l2-2M15 15l2-2"/></svg></div>
+            <b data-i="sf3t">不要管理员密码</b><p data-i="sf3d">不装后台常驻服务，也不改系统文件。</p>
+          </div>
+          <div class="sitem rv" style="--d:.17s">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 8l-5 4 5 4M15 8l5 4-5 4"/></svg></div>
+            <b data-i="sf4t">完全开源</b><p data-i="sf4d">所有代码都在 GitHub 上，还自带自检和测速命令。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INSTALL ============ -->
+  <section id="install">
+    <div class="wrap">
+      <div class="install">
+        <div class="rv">
+          <div class="eyebrow"><span class="dotp"></span><span data-i="in_eb">安装</span></div>
+          <h2 data-i="in_h2">三十秒装好</h2>
+          <p class="lead" data-i="in_p">没有安装器、没有后台服务，拖进「应用程序」就能用。</p>
+        </div>
+        <div class="rv" style="--d:.08s">
+          <ol class="steps3">
+            <li><span data-i="in1">到下载页下载最新的 File-Butler-x.x.dmg。</span></li>
+            <li><span data-i="in2">打开 DMG，把「文件管家」拖进「应用程序」。</span></li>
+            <li>
+              <span data-i="in3">应用没有经过苹果公证。第一次打开请在「应用程序」里右键 › 打开，或到 系统设置 › 隐私与安全性 点「仍要打开」。也可以在终端运行：</span>
+              <div class="codebox">
+                <div class="cb-bar"><i></i><i></i><i></i><span>Terminal</span></div>
+                <pre>xattr -dr com.apple.quarantine <span class="s">"/Applications/文件管家.app"</span></pre>
+                <button class="copy" id="copybtn" data-i="copy">复制</button>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FINAL ============ -->
+  <section class="final">
+    <div class="wrap">
+      <img class="appicon rv" src="icon.png" alt="文件管家">
+      <h2 class="rv" style="--d:.05s" data-i="fi_h2">给文件一个<br>更好用的家</h2>
+      <p class="lead rv" style="--d:.1s" data-i="fi_p">免费、开源，约 3 MB。下载完就能用，不用注册，不用登录。</p>
+      <div class="hero-cta rv" style="--d:.15s">
+        <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
+          免费下载
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/yostyang/file-butler" data-i="fi_gh">在 GitHub 上看源码</a>
+      </div>
+      <div class="hero-meta rv" style="--d:.2s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 约 3 MB <i>·</i> 开源免费</div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="foot">
+        <div class="fb"><img src="icon.png" alt=""><span>© 2026 <a href="https://github.com/yostyang">@yostyang</a></span></div>
+        <nav>
+          <a href="https://github.com/yostyang/file-butler">GitHub</a>
+          <a href="https://github.com/yostyang/file-butler/releases" data-i="ft_rel">版本记录</a>
+          <a href="https://yostyang.github.io/mac-optimizer/" data-i="ft_sib">Mac 一键优化</a>
+        </nav>
+        <span data-i="ft_made">vibe coded with ♥</span>
+      </div>
+    </div>
+  </footer>
+</main>
+
 <script>
-const T={
-zh:{name:"文件管家",dl:"下载",dlfree:"免费下载",more:"了解更多",
-h1a:"比访达更顺手，",h1b:"轻松管理",h1c:"",rot:["文件","标签页","照片","下载","整台 Mac"],
-sub:"双栏、标签页、四种显示方式、实时预览、标签和空间分析，访达的常用功能一个不少，占用却更低。",
-meta:"macOS 13 及以上 · Apple 芯片与 Intel 通用 · 约 3 MB · 开源免费",
-whyT:"为什么做这个",
-why1:"访达够用，但整理大量文件时总差一点：没有双栏，来回拖文件要开两个窗口；想知道哪个文件夹最占空间，还得另装工具。",
-why2:"想要 Path Finder 那样的效率，又不想多一个吃资源的大软件。",
-why3:"于是做了文件管家：原生 Swift 编写，访达的功能都在，再加上双栏、预览栏和空间分析，而且安静地待在后台时几乎不占资源。",
-illus:"示意图，非真实截图",
-f1T:"双栏 + 标签页，整理文件快一倍",f1D:"左右两栏各自浏览，每栏都能开多个标签页。按 Tab 切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。",
-u_home:"个人",u_dl:"下载",u_copy:"拷贝到另一栏  F5",
-f2T:"图标、列表、分栏、画廊，随你切换",f2D:"⌘1 到 ⌘4 一键切换，每个标签页单独记住。还能按种类、日期、大小或标签分组，排序方式随时调整。",
-f3T:"预览栏：不打开也能看清内容",f3D:"⇧⌘P 打开右侧预览栏，图片、PDF、视频、文本代码、Office 文档都能直接预览，下面列出尺寸、时长、大小和标签。空格键还能快速查看。",
-u_kind:"种类",u_png:"PNG 图像",u_dim:"尺寸",u_size:"大小",u_tags:"标签",
-f4T:"搜索与标签，马上找到要的文件",f4D:"⌘F 输入就即时过滤当前文件夹，也能切换到「包括子文件夹」或「整台 Mac」用 Spotlight 搜索。访达标签一样能看、能改，侧边栏点一下就列出带这个标签的所有文件。",
-u_scope:"整台 Mac",
-f5T:"空间分析：看看空间都去哪了",f5D:"一键统计当前文件夹的空间占用，用环形图和排行列表展示，可以一层层点进去，看到大文件直接在里面定位或移到废纸篓。",
-u_space:"空间分析",
-f6T:"轻量，比访达占用更低",f6D:"在同一台 Mac 上实测：空闲时 CPU 0%、没有后台唤醒、内存约 63 MB。读取一个有 1 万个文件的文件夹约 0.27 秒。",
-u_fb:"文件管家",u_icpu:"空闲 CPU",u_imem:"内存",u_wake:"空闲唤醒",u_load:"读取 1 万个文件",u_loadv:"约 0.27 秒（v0.2 约 1.5 秒）",
-u_star:"* 实测于同一台 Mac。访达的数字包含它负责的桌面和系统工作，仅供参考。",
-safeT:"放心交给它",safeD:"文件操作都很保守，出错也能挽回。",
-s1:"绝不直接删除",s1d:"删除一律移到废纸篓，不会永久删除。",s2:"操作都能撤销",s2d:"重命名、移动、拷贝、新建、移到废纸篓都可以用 ⌘Z 撤销。",s3:"不要管理员密码",s3d:"不装后台常驻服务，也不改系统文件。",s4:"完全开源",s4d:"所有代码都在 GitHub 上，还自带自检和测速命令。",
-insT:"安装",i1:"到下载页下载最新的 File-Butler-x.x.dmg。",i2:"打开 DMG，把「文件管家」拖进「应用程序」。",i3:"应用没有经过苹果公证。第一次打开请在「应用程序」里右键 › 打开，或到 系统设置 › 隐私与安全性 点「仍要打开」。也可以在终端运行：",
-endT:"给文件一个更好用的家",endD:"免费、开源，约 3 MB。",rel:"版本记录",sib:"Mac 一键优化",made:"vibe coded with ♥"},
-en:{name:"File Butler",dl:"Download",dlfree:"Download for free",more:"Learn more",
-h1a:"Smoother than Finder.",h1b:"Take charge of your",h1c:"",rot:["files","tabs","photos","downloads","whole Mac"],
-sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, with a lighter footprint.",
-meta:"macOS 13+ · Apple silicon & Intel · About 3 MB · Free & open source",
-whyT:"Why I built this",
-why1:"Finder does the job, but organizing lots of files always feels one step short: no dual panes, so moving files means juggling two windows, and finding what eats your disk needs yet another app.",
-why2:"I wanted Path Finder's speed without another heavyweight app.",
-why3:"So I built File Butler: native Swift, with everything Finder does plus dual panes, a preview panel and space analysis, and it uses almost nothing while it sits idle.",
-illus:"Illustration, not a real screenshot",
-f1T:"Dual panes and tabs, twice as fast",f1D:"Browse two folders side by side, each with its own tabs. Press Tab to switch, F5 to copy and F6 to move to the other pane, or just drag between panes and to or from Finder.",
-u_home:"Home",u_dl:"Downloads",u_copy:"Copy to other pane  F5",
-f2T:"Icon, list, column or gallery",f2D:"Switch with ⌘1 to ⌘4, remembered per tab. Group by kind, date, size or tag, and change the sort order any time.",
-f3T:"Preview panel: see it without opening it",f3D:"Press ⇧⌘P for a live preview of images, PDFs, videos, text and code, and Office documents, with dimensions, duration, size and tags below. Space opens Quick Look.",
-u_kind:"Kind",u_png:"PNG image",u_dim:"Dimensions",u_size:"Size",u_tags:"Tags",
-f4T:"Search and tags that find things fast",f4D:"Press ⌘F and type to filter the current folder instantly, or search subfolders or the whole Mac with Spotlight. Finder tags show up and can be edited, and one click in the sidebar lists every file with a tag.",
-u_scope:"Whole Mac",
-f5T:"Space analysis: see where your disk went",f5D:"Measure a folder in one click, shown as a ring chart and a ranked list. Drill down level by level, then reveal big files or move them to the Trash right there.",
-u_space:"Space analysis",
-f6T:"Lightweight, lighter than Finder",f6D:"Measured on the same Mac: 0% CPU at idle, no background wakeups, about 63 MB of memory. A folder with 10,000 files loads in about 0.27 s.",
-u_fb:"File Butler",u_icpu:"Idle CPU",u_imem:"Memory",u_wake:"Idle wakeups",u_load:"Load 10,000 files",u_loadv:"≈ 0.27 s (v0.2: ≈ 1.5 s)",
-u_star:"* Measured on the same Mac. Finder's figure includes the desktop and system work it handles, so treat it as a rough reference.",
-safeT:"Safe by design",safeD:"File operations are conservative, and mistakes can be undone.",
-s1:"Never deletes outright",s1d:"Deleting always moves items to the Trash, never permanently.",s2:"Everything can be undone",s2d:"Rename, move, copy, new folder and Move to Trash all undo with ⌘Z.",s3:"No admin password",s3d:"No background daemons, no changes to system files.",s4:"Fully open source",s4d:"All the code is on GitHub, with built-in self-test and benchmark commands.",
-insT:"Install",i1:"Download the latest File-Butler-x.x.dmg from the Releases page.",i2:"Open the DMG and drag 文件管家 (File Butler) into Applications.",i3:"The app isn't notarized by Apple. The first time, right-click it in Applications and choose Open, or go to System Settings › Privacy & Security and click “Open Anyway”. Or run this in Terminal:",
-endT:"Give your files a better home",endD:"Free, open source, about 3 MB.",rel:"Releases",sib:"Mac Optimizer",made:"vibe coded with ♥"}};
-let lang=localStorage.getItem("lang")||(navigator.language.startsWith("zh")?"zh":"en"),ri=0,timer;
-function apply(l){lang=l;localStorage.setItem("lang",l);const d=T[l];
- document.documentElement.lang=l=="zh"?"zh-CN":"en";document.title=l=="zh"?"文件管家 · 轻量的 macOS 双栏文件管理器":"File Butler · A lightweight dual-pane file manager for macOS";
- document.querySelectorAll("[data-i]").forEach(e=>{const v=d[e.dataset.i];if(v!==undefined)e.textContent=v});
- document.querySelectorAll(".lang button").forEach(b=>b.classList.toggle("on",b.dataset.l==l));
- ri=0;spin();clearInterval(timer);timer=setInterval(spin,1800)}
-function spin(){const w=T[lang].rot,el=document.querySelector("#rot");el.innerHTML="<span>"+w[ri%w.length]+"</span>";ri++}
-document.querySelectorAll(".lang button").forEach(b=>b.onclick=()=>apply(b.dataset.l));
+(function(){
+"use strict";
+var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- i18n ---------- */
+var ZH = {};
+document.querySelectorAll("[data-i]").forEach(function(e){ ZH[e.dataset.i] = e.innerHTML; });
+
+var EN = {
+  name:"File Butler",
+  nav_why:"Why", nav_core:"Core", nav_fn:"Features", nav_safe:"Safety", nav_dl:"Download",
+  badge_b:"Open source · Free", badge_a:"about 3 MB",
+  h1a:"Smoother than Finder.", h1b:"Take charge of your",
+  sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, with a lighter footprint.",
+  cta1:'Download for free<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
+  cta2:"See what it does",
+  meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> About 3 MB <i>·</i> Free &amp; open source",
+  scroll:"Scroll",
+  chip_cpu:"Idle CPU", chip2:"1 item copied",
+  win_title:"File Butler", tab1:"Projects", tab2:"Home",
+  pane1:"Projects", pane1b:"Design", pane2:"Downloads", pane2b:"All",
+  status_l:"2 tabs · 12 items · 1 selected",
+  status_k1:"switch", status_k2:"copy", status_k3:"move",
+  m1:"Dual panes", m2:"Multiple tabs", m3:"Icon / List / Column / Gallery", m4:"Live preview panel",
+  m5:"Finder tags shared", m6:"Spotlight search", m7:"Space analysis ring", m8:"0% CPU at idle",
+  pb_eb:"The problem",
+  pb_h2:"Finder is fine — until you have a lot of files",
+  pb_p:"Finder does what it has to. But the moment you have thousands of files to put in order, that \"one step short\" gets amplified — every single move costs you another window switch.",
+  pb_c1n:"One pane short", pb_c2n:"One app short", pb_c3n:"A trade-off",
+  pb_c1t:"No dual panes, so you juggle windows",
+  pb_c1d:"Moving a file from A to B means opening two Finder windows, dragging across, then switching back. With a lot of files, just finding the right window is the annoying part.",
+  pb_c2t:"Seeing your disk needs another app",
+  pb_c2d:"Which folder is eating the space? Finder gives you a rough number in About This Mac, and nothing more. For detail you need a separate space-analysis app.",
+  pb_c3t:"Either put up with it, or carry a heavyweight",
+  pb_c3d:"The speed of Path Finder is genuinely good — but paying for one extra pane with a big app that sits in memory and wakes up in the background all day isn't a good trade.",
+  pb_q:'I wanted Path Finder\'s speed without another heavyweight app.<span>So I built File Butler.</span>',
+  vs_ot:"Finder + a pile of tools",
+  vs_oh:"It gets done — with a detour at every step",
+  vs_o1:"Dragging files means two windows and constant switching",
+  vs_o2:"Checking disk usage means installing another app",
+  vs_o3:"Changing views means digging through menus, in every window",
+  vs_o4:"Batch organizing is basically all manual",
+  vs_nt:"File Butler",
+  vs_nh:"One window, everything done",
+  vs_n1:"Two panes side by side — F5 copies straight across",
+  vs_n2:"Space analysis built in, a ring chart tells the story",
+  vs_n3:"⌘1–⌘4 switches views instantly, remembered per tab",
+  vs_n4:"Rename, move and trash all undo with ⌘Z",
+  co_eb:"The core",
+  co_h2:"Dual panes and tabs.<br>Twice as fast.",
+  co_p:"Browse two folders side by side, each with its own tabs. Press Tab to switch, F5 to copy and F6 to move to the other pane, or just drag between panes and to or from Finder.",
+  co_s1t:"Open two panes", co_s1d:"Side by side, each with its own path and tabs. They stay out of each other's way.",
+  co_s2t:"Select", co_s2d:"Click or use the arrow keys, multi-select included. Tab moves focus between panes.",
+  co_s3t:"Move it", co_s3d:"F5 to copy, F6 to move, or just drag it across — into Finder too.",
+  fp1:"Projects", fp2:"Downloads",
+  bt_eb:"Everything",
+  bt_h2:'Everything you need,<br><span class="grad-text">nothing you don\'t</span>',
+  bt_p:"Everything you already use in Finder is here — plus a few things it never got around to.",
+  f1t:"Four view modes", f1d:"Icon, list, column and gallery, with ⌘1 to ⌘4. Each tab remembers its own, so you never set it twice.",
+  f2t:"Preview panel", f2d:"⇧⌘P opens a live preview of images, PDFs, videos, text and code, and Office documents — with dimensions, duration, size and tags underneath.",
+  f3t:"Instant search", f3d:"⌘F filters the current folder as you type, or widen it to subfolders or the whole Mac with the Spotlight index.",
+  f4t:"Finder tags, shared", f4d:"Tags set in Finder show up here and can be edited. One click in the sidebar lists every file carrying that tag.",
+  f5t:"Space analysis", f5d:"Measure a folder in one click: a ring chart plus a ranked list you can drill into. Spot a big file and reveal it or send it to the Trash right there.",
+  f6t:"Grouping and sorting", f6d:"Group by kind, date, size or tag, and change the sort order any time. Big folders become scannable.",
+  f7t:"Keyboard first", f7d:"Tab to switch panes, F5 to copy, F6 to move, ⌘1–⌘4 for views, ⇧⌘P to preview, ⌘F to search, ⌘Z to undo. Your hands never leave the keyboard.",
+  f8t:"Plays well with Finder", f8d:"Drag between panes, or to and from Finder. Tags, file types and icons all come from the system, so nothing looks foreign.",
+  f9t:"Native and light", f9d:"Written in Swift and compiled for Apple silicon and Intel alike. 0% CPU at idle, no background wakeups, about 63 MB of memory.",
+  st_eb:"The details", st_h2:"Four things you only notice once you use them",
+  st_p:"Everything below is how the app actually works — no concept art.",
+  s1k:"Preview", s1t:"See what's inside without opening it",
+  s1d:"Select a file and the right panel fills in: images, PDFs, videos, text, code and Office documents, with dimensions, duration, size and tags below. Space opens Quick Look for a full view.",
+  s2k:"Space", s2t:"Find out where the space actually went",
+  s2d:"One click measures the current folder: a ring chart plus a ranked list you can drill into level by level. Spot a big file, reveal it in place, or send it to the Trash.",
+  s3k:"Search", s3t:"Type a few letters, get the file",
+  s3d:"⌘F filters the current folder instantly; widen it to subfolders or the whole Mac when you need to. Finder tags are searchable too — click one in the sidebar to list every file with it.",
+  s4k:"Performance", s4t:"Light enough to forget it's running",
+  s4d:"Measured on the same Mac: 0% CPU at idle, no background wakeups, about 63 MB of memory. A folder with 10,000 files loads in about 0.27 s.",
+  u_kind:"Kind", u_png:"PNG image", u_dim:"Dimensions", u_size:"Size", u_tagl:"Tags", u_tagv:"Design · Pending",
+  u_t1:"Design", u_t2:"Pending", u_t3:"Finance", u_other:"Other",
+  u_scope:"Whole Mac",
+  u_fb:"File Butler", u_icpu:"Idle CPU", u_imem:"Memory", u_wake:"Idle wakeups", u_load:"Load 10,000 files",
+  u_loadv:"≈ 0.27 s (v0.2: ≈ 1.5 s)",
+  u_star:"* Measured on the same Mac. Finder's figure includes the desktop and system work it handles, so treat it as a rough reference.",
+  sf_eb:"Safety", sf_h2:"Safe to hand over",
+  sf_p:"File operations stay conservative, and mistakes are reversible. No black-box \"one-click clean\", no invisible background agent.",
+  sf1t:"Never deletes outright", sf1d:"Deleting always moves items to the Trash, never permanently.",
+  sf2t:"Everything can be undone", sf2d:"Rename, move, copy, new folder and Move to Trash all undo with ⌘Z.",
+  sf3t:"No admin password", sf3d:"No background daemons, no changes to system files.",
+  sf4t:"Fully open source", sf4d:"All the code is on GitHub, with built-in self-test and benchmark commands.",
+  in_eb:"Install", in_h2:"Thirty seconds, done",
+  in_p:"No installer, no background service. Drag it into Applications and you're set.",
+  in1:"Download the latest File-Butler-x.x.dmg from the Releases page.",
+  in2:"Open the DMG and drag 文件管家 (File Butler) into Applications.",
+  in3:"The app isn't notarized by Apple. The first time, right-click it in Applications and choose Open, or go to System Settings › Privacy & Security and click \"Open Anyway\". Or run this in Terminal:",
+  copy:"Copy",
+  fi_h2:"Give your files<br>a better home",
+  fi_p:"Free, open source, about 3 MB. Download and run — no sign-up, no account.",
+  fi_gh:"Read the source on GitHub",
+  ft_rel:"Releases", ft_sib:"Mac Optimizer", ft_made:"vibe coded with ♥"
+};
+var ROT = { zh:["文件","标签页","照片","下载","素材"], en:["files","tabs","photos","downloads","assets"] };
+var TITLE = {
+  zh:"文件管家 · 比访达更顺手的 macOS 双栏文件管理器",
+  en:"File Butler · A lightweight dual-pane file manager for macOS"
+};
+
+var lang = localStorage.getItem("lang") || (navigator.language.toLowerCase().indexOf("zh")===0 ? "zh" : "en");
+var ri = 0, timer = null;
+
+function apply(l){
+  lang = l;
+  try{ localStorage.setItem("lang", l); }catch(e){}
+  var d = l === "zh" ? ZH : EN;
+  document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
+  document.title = TITLE[l];
+  document.querySelectorAll("[data-i]").forEach(function(e){
+    var v = d[e.dataset.i];
+    if(v !== undefined) e.innerHTML = v;
+  });
+  document.querySelectorAll(".lang button").forEach(function(b){
+    b.classList.toggle("on", b.dataset.l === l);
+  });
+  ri = 0; spin();
+  if(timer) clearInterval(timer);
+  timer = setInterval(spin, 2200);
+}
+function spin(){
+  var el = document.getElementById("rot");
+  if(!el) return;
+  var w = ROT[lang];
+  el.innerHTML = "<span>" + w[ri % w.length] + "</span>";
+  ri++;
+}
+document.querySelectorAll(".lang button").forEach(function(b){
+  b.addEventListener("click", function(){ apply(b.dataset.l); });
+});
 apply(lang);
-const hd=document.getElementById("hd"),more=document.getElementById("more");
-addEventListener("scroll",()=>{hd.classList.toggle("scrolled",scrollY>40);more.classList.toggle("hide",scrollY>innerHeight*.6||innerHeight+scrollY>document.body.scrollHeight-300)});
-const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("on");io.unobserve(e.target)}}),{threshold:.15});
-document.querySelectorAll(".reveal").forEach(e=>io.observe(e));
+
+/* ---------- marquee ---------- */
+var mq = document.getElementById("mq");
+if(mq) mq.innerHTML += mq.innerHTML;
+
+/* ---------- header + progress ---------- */
+var hd = document.getElementById("hd");
+var prog = document.getElementById("prog");
+var ticking = false;
+function onScroll(){
+  var y = window.pageYOffset || document.documentElement.scrollTop;
+  hd.classList.toggle("scrolled", y > 30);
+  var h = document.documentElement.scrollHeight - window.innerHeight;
+  prog.style.width = (h > 0 ? (y / h) * 100 : 0) + "%";
+  if(!reduce) parallax(y);
+  ticking = false;
+}
+window.addEventListener("scroll", function(){
+  if(!ticking){ ticking = true; requestAnimationFrame(onScroll); }
+}, {passive:true});
+
+/* ---------- reveal ---------- */
+var io = new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target); }
+  });
+}, {threshold:.12, rootMargin:"0px 0px -8% 0px"});
+document.querySelectorAll(".rv").forEach(function(e){ io.observe(e); });
+
+/* ---------- tilt + parallax ---------- */
+var tilt = document.getElementById("tilt");
+var hero = document.querySelector(".hero");
+if(tilt && !reduce && window.matchMedia("(hover:hover)").matches){
+  var tx = 0, ty = 0, cx = 0, cy = 0, raf = null;
+  hero.addEventListener("pointermove", function(e){
+    var r = hero.getBoundingClientRect();
+    tx = ((e.clientX - r.left) / r.width - .5) * 9;
+    ty = ((e.clientY - r.top) / r.height - .5) * -6;
+    if(!raf) raf = requestAnimationFrame(tiltLoop);
+  });
+  function tiltLoop(){
+    cx += (tx - cx) * .08;
+    cy += (ty - cy) * .08;
+    tilt.style.transform = "rotateY(" + cx.toFixed(2) + "deg) rotateX(" + cy.toFixed(2) + "deg)";
+    if(Math.abs(tx - cx) > .01 || Math.abs(ty - cy) > .01){ raf = requestAnimationFrame(tiltLoop); }
+    else { raf = null; }
+  }
+}
+var hv = document.querySelector(".hero-visual");
+function parallax(y){
+  if(hv && y < window.innerHeight * 1.4){
+    hv.style.transform = "translateY(" + (y * .1).toFixed(1) + "px)";
+    hv.style.opacity = String(Math.max(0, 1 - y / (window.innerHeight * .95)));
+  }
+}
+
+/* ---------- card spotlight ---------- */
+document.querySelectorAll(".card, .pcard, .sitem").forEach(function(c){
+  c.addEventListener("pointermove", function(e){
+    var r = c.getBoundingClientRect();
+    c.style.setProperty("--mx", (e.clientX - r.left) + "px");
+    c.style.setProperty("--my", (e.clientY - r.top) + "px");
+  });
+});
+
+/* ---------- sticky stack ---------- */
+var cards = Array.prototype.slice.call(document.querySelectorAll(".scard"));
+var stackOn = window.matchMedia("(min-width:881px)");
+function stackUpdate(){
+  if(!stackOn.matches) return;
+  for(var i = 0; i < cards.length; i++){
+    var c = cards[i];
+    var next = cards[i + 1];
+    var p = 0;
+    if(next){
+      var nr = next.getBoundingClientRect();
+      var start = window.innerHeight * .92;
+      var end = window.innerHeight * .14;
+      p = (start - nr.top) / (start - end);
+      p = Math.max(0, Math.min(1, p));
+    }
+    c.style.setProperty("--p", p.toFixed(3));
+  }
+}
+window.addEventListener("scroll", function(){
+  if(!reduce) requestAnimationFrame(stackUpdate);
+}, {passive:true});
+window.addEventListener("resize", stackUpdate);
+stackUpdate();
+
+/* ---------- magnetic buttons ---------- */
+if(!reduce && window.matchMedia("(hover:hover)").matches){
+  document.querySelectorAll(".btn").forEach(function(b){
+    b.addEventListener("pointermove", function(e){
+      var r = b.getBoundingClientRect();
+      var x = (e.clientX - r.left - r.width / 2) / r.width * 10;
+      var y = (e.clientY - r.top - r.height / 2) / r.height * 8;
+      b.style.transform = "translate(" + x.toFixed(1) + "px," + (y - 2).toFixed(1) + "px)";
+    });
+    b.addEventListener("pointerleave", function(){ b.style.transform = ""; });
+  });
+}
+
+/* ---------- copy ---------- */
+var cb = document.getElementById("copybtn");
+if(cb) cb.addEventListener("click", function(){
+  var txt = 'xattr -dr com.apple.quarantine "/Applications/文件管家.app"';
+  var done = function(){
+    cb.textContent = lang === "zh" ? "已复制" : "Copied";
+    setTimeout(function(){ cb.textContent = lang === "zh" ? "复制" : "Copy"; }, 1600);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done, done);
+  } else {
+    var ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); }catch(e){} document.body.removeChild(ta); done();
+  }
+});
+
+onScroll();
+})();
 </script>
 </body>
 </html>
