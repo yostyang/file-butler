@@ -77,7 +77,8 @@ final class DrawCell: NSTableCellView {
     var textX: CGFloat { isName ? 24 : 2 }
     func textRect() -> NSRect {
         let h = ceil(tcell.cellSize.height)
-        return NSRect(x: textX, y: floor((bounds.height - h) / 2), width: max(0, bounds.width - textX - 2), height: h)
+        // NSTextFieldCell 直接绘制时比标签控件多 2pt 内边距：两侧各放宽 2pt，文字位置与原来的标签逐像素一致
+        return NSRect(x: textX - 2, y: floor((bounds.height - h) / 2), width: max(0, bounds.width - textX + 2), height: h)
     }
     override func draw(_ dirtyRect: NSRect) {
         if let ic = icon {
