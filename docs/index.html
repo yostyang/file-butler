@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件管家 · 比访达更顺手的 macOS 双栏文件管理器</title>
 <meta name="description" content="双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少，占用却更低。原生 Swift 编写，开源免费。">
-<meta name="theme-color" content="#07070a">
+<meta name="theme-color" content="#07070a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6fa" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark light">
 <meta property="og:title" content="文件管家 · 比访达更顺手的 macOS 双栏文件管理器">
 <meta property="og:description" content="双栏 + 标签页 + 实时预览 + 空间分析，轻量到空闲 0% CPU。开源免费。">
 <meta property="og:image" content="icon.png">
@@ -614,6 +616,44 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   .flow-mid{height:34px}
   .flow-chip{display:none}
 }
+
+/* ============ light theme (系统为浅色外观时) ============ */
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f6fa; --ink:#14141c; --ink-2:#3a3a4a; --mute:#5c5c70; --mute-2:#6a6a7e;
+    --line:rgba(20,20,40,.12); --line-2:rgba(20,20,40,.07); --card:rgba(255,255,255,.7);
+    --a1:#5455e8; --a2:#1f86d6; --ok:#13a058; --warn:#b86e00;
+  }
+  ::selection{background:rgba(104,105,249,.25)}
+  .ambient::before{background:linear-gradient(133deg,rgba(107,92,250,.10) 0%,rgba(104,105,249,.06) 34%,rgba(62,169,246,.04) 66%,rgba(62,169,246,.09) 100%)}
+  .blob{opacity:.22!important}
+  header.scrolled{background:rgba(246,246,250,.8)}
+  .lang{background:rgba(20,20,40,.04)}
+  .lang button.on{background:#fff;box-shadow:0 1px 3px rgba(20,20,40,.12)}
+  .btn-ghost{background:rgba(255,255,255,.75);border-color:var(--line)}
+  .btn-ghost:hover{background:#fff;border-color:rgba(20,20,40,.2)}
+  .badge{background:rgba(255,255,255,.75)}
+  .win{box-shadow:0 40px 90px -30px rgba(40,40,90,.35),0 0 0 1px rgba(20,20,40,.08)}
+  .chip,.chip2{background:rgba(255,255,255,.92)!important;color:#3a3a4a!important;border-color:rgba(20,20,40,.1)!important;box-shadow:0 10px 30px -12px rgba(40,40,90,.3)}
+  .scroll-hint .bar{background:linear-gradient(180deg,rgba(20,20,40,.3),transparent)}
+  .scroll-hint .bar::after{background:linear-gradient(180deg,transparent,#14141c)}
+  .marquee{background:rgba(255,255,255,.5)}
+  .mq-item::after{background:rgba(20,20,40,.2)}
+  .pcard,.card,.sitem,.vs-card.old{background:rgba(255,255,255,.78)!important;border-color:var(--line)!important;box-shadow:0 14px 40px -26px rgba(40,40,90,.35)}
+  .pcard:hover,.card:hover,.sitem:hover{background:#fff!important;border-color:rgba(20,20,40,.16)!important}
+  .vs-card.new{background:linear-gradient(165deg,rgba(104,105,249,.14),rgba(62,169,246,.06) 60%,#fff);box-shadow:0 30px 70px -44px rgba(104,105,249,.7)}
+  .vs-card.new .vs-tag{background:#5c5df0;color:#fff;border-color:transparent}
+  .vs-card.old .vs-tag{background:rgba(20,20,40,.05)}
+  .vs-card.old li i{background:rgba(20,20,40,.06);color:#6a6a7e}
+  .vs::after{background:#fff!important;box-shadow:0 0 0 6px rgba(246,246,250,.9)!important}
+  .card .ic{color:#fff}
+  .mini span{background:rgba(20,20,40,.04)!important;color:#55556a!important}
+  .flow,.pv,.bento,.bn,.sp,.se{box-shadow:0 24px 60px -30px rgba(40,40,90,.35)}
+  .shine-line{background:linear-gradient(90deg,transparent,rgba(104,105,249,.4),transparent)}
+  .copy{background:rgba(255,255,255,.1);color:#b9b9cc}
+  .appicon{box-shadow:0 22px 50px -16px rgba(104,105,249,.55),0 0 0 1px rgba(20,20,40,.08)}
+  .grad-text,.rot span{background-image:linear-gradient(96deg,#6b5cfa 0%,#5455e8 40%,#1f86d6 100%)}
+}
 </style>
 </head>
 <body>
@@ -647,7 +687,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   <!-- ============ HERO ============ -->
   <section class="hero">
     <div class="hero-inner">
-      <div class="badge rise" style="--d:.05s"><span class="led"></span><span><b data-i="badge_b">开源 · 免费</b> · <span data-i="badge_a">约 3 MB</span></span></div>
+      <div class="badge rise" style="--d:.05s"><span class="led"></span><span><b data-i="badge_b">开源 · 免费</b> · <span data-i="badge_a">下载约 4 MB</span></span></div>
       <h1>
         <span class="line rise" style="--d:.12s" data-i="h1a">比访达更顺手，</span>
         <span class="line rise" style="--d:.2s"><span data-i="h1b">轻松管理</span> <span class="rot" id="rot"><span>文件</span></span></span>
@@ -660,7 +700,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         </a>
         <a class="btn btn-ghost" href="#core" data-i="cta2">看看它能做什么</a>
       </div>
-      <div class="hero-meta rise" style="--d:.46s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 约 3 MB <i>·</i> 开源免费</div>
+      <div class="hero-meta rise" style="--d:.46s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 下载约 4 MB <i>·</i> 开源免费</div>
     </div>
 
     <div class="hero-visual rise" style="--d:.5s">
@@ -671,7 +711,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
             <span class="bars"><i></i><i></i><i></i><i></i><i></i></span>
             <span data-i="chip_cpu">空闲 CPU</span> <b>0%</b>
             <span style="opacity:.35">|</span>
-            <span><b>63</b> MB</span>
+            <span><b>78</b> MB</span>
           </div>
           <div class="chip2">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
@@ -877,14 +917,14 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         <div class="card rv" style="--d:.06s">
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9a3 3 0 010 6H6"/><path d="M9 16l-3-3 3-3"/><path d="M20 17H11"/></svg></div>
           <h3 data-i="f8t">和访达互通</h3>
-          <p data-i="f8d">两栏之间可以拖，和访达之间也可以拖。标签、文件类型、图标全都沿用系统的那一套。</p>
+          <p data-i="f8d">两栏之间可以拖，和访达之间也可以拖。标签、文件类型、图标全都沿用系统的那一套。同一磁盘拖动是移动、跨磁盘是拷贝（按 ⌥ 拷贝），同名时弹出和访达一样的「保留两者 / 停止 / 替换」；大文件拷贝有进度窗口，可随时停止。</p>
           <div class="mini"><span>Drag &amp; Drop</span><span>Native</span></div>
         </div>
         <div class="card rv" style="--d:.1s">
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.5L5 13h6l-1 8.5 8-11.5h-6l1-8z"/></svg></div>
           <h3 data-i="f9t">原生轻量</h3>
-          <p data-i="f9d">Swift 编写，只为 Apple 芯片和 Intel 各编译一次。空闲时 CPU 0%、没有后台唤醒，内存约 63 MB。</p>
-          <div class="mini"><span>Swift</span><span>0% CPU</span><span>63 MB</span></div>
+          <p data-i="f9d">Swift 编写，只为 Apple 芯片和 Intel 各编译一次。空闲时 CPU 0%、几乎没有后台唤醒，内存约 80 MB。</p>
+          <div class="mini"><span>Swift</span><span>0% CPU</span><span>~80 MB</span></div>
         </div>
       </div>
     </div>
@@ -986,18 +1026,18 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
           <div class="st">
             <div class="k"><i></i><span data-i="s4k">性能</span></div>
             <h3 data-i="s4t">轻到你会忘记它在运行</h3>
-            <p data-i="s4d">同一台 Mac 上实测：空闲 CPU 0%，没有后台唤醒，内存约 63 MB。一个有 1 万个文件的文件夹，约 0.27 秒读完。</p>
+            <p data-i="s4d">v0.5.1 实测（M 系列 Mac，两栏都打开）：空闲 CPU 0%，30 秒里只有 1 次唤醒，内存约 80 MB。读取一个有 1 万个文件的文件夹约 0.4 秒。</p>
           </div>
           <div class="mock rv">
             <div class="bn">
               <table>
-                <tr><th></th><th class="hl" data-i="u_fb">文件管家</th><th>Finder</th></tr>
-                <tr><td data-i="u_icpu">空闲 CPU</td><td class="hl"><em>0%</em></td><td>0.6–0.9%</td></tr>
-                <tr><td data-i="u_imem">内存</td><td class="hl"><em>63 MB</em></td><td>181 MB*</td></tr>
-                <tr><td data-i="u_wake">空闲唤醒</td><td class="hl"><em>0</em></td><td>~1000</td></tr>
-                <tr><td data-i="u_load">读取 1 万个文件</td><td class="hl" colspan="2"><em data-i="u_loadv">约 0.27 秒（v0.2 约 1.5 秒）</em></td></tr>
+                <tr><th></th><th class="hl" data-i="u_fb">文件管家</th></tr>
+                <tr><td data-i="u_icpu">空闲 CPU</td><td class="hl"><em>0%</em></td></tr>
+                <tr><td data-i="u_imem">内存</td><td class="hl"><em>约 80 MB</em></td></tr>
+                <tr><td data-i="u_wake">空闲唤醒</td><td class="hl"><em data-i="u_wakev">30 秒 1 次</em></td></tr>
+                <tr><td data-i="u_load">读取 1 万个文件</td><td class="hl"><em data-i="u_loadv">约 0.4 秒</em></td></tr>
               </table>
-              <p class="note" data-i="u_star">* 实测于同一台 Mac。访达的数字包含它负责的桌面和系统工作，仅供参考。</p>
+              <p class="note" data-i="u_star">测于 v0.5.1、M 系列 Mac、2026 年 10 月；内存为 footprint，打开两栏时。1 万个文件为本地 APFS 磁盘上的文件夹，取 5 次的中位数。</p>
             </div>
           </div>
         </article>
@@ -1069,7 +1109,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
     <div class="wrap">
       <img class="appicon rv" src="icon.png" alt="文件管家">
       <h2 class="rv" style="--d:.05s" data-i="fi_h2">给文件一个<br>更好用的家</h2>
-      <p class="lead rv" style="--d:.1s" data-i="fi_p">免费、开源，约 3 MB。下载完就能用，不用注册，不用登录。</p>
+      <p class="lead rv" style="--d:.1s" data-i="fi_p">免费、开源，下载约 4 MB。下载完就能用，不用注册，不用登录。</p>
       <div class="hero-cta rv" style="--d:.15s">
         <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
           免费下载
@@ -1077,7 +1117,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         </a>
         <a class="btn btn-ghost" href="https://github.com/yostyang/file-butler" data-i="fi_gh">在 GitHub 上看源码</a>
       </div>
-      <div class="hero-meta rv" style="--d:.2s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 约 3 MB <i>·</i> 开源免费</div>
+      <div class="hero-meta rv" style="--d:.2s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> 下载约 4 MB <i>·</i> 开源免费</div>
     </div>
   </section>
 
@@ -1108,12 +1148,12 @@ document.querySelectorAll("[data-i]").forEach(function(e){ ZH[e.dataset.i] = e.i
 var EN = {
   name:"File Butler",
   nav_why:"Why", nav_core:"Core", nav_fn:"Features", nav_safe:"Safety", nav_dl:"Download",
-  badge_b:"Open source · Free", badge_a:"about 3 MB",
+  badge_b:"Open source · Free", badge_a:"about 4 MB download",
   h1a:"Smoother than Finder.", h1b:"Take charge of your",
   sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, with a lighter footprint.",
   cta1:'Download for free<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   cta2:"See what it does",
-  meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> About 3 MB <i>·</i> Free &amp; open source",
+  meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> About 4 MB download <i>·</i> Free &amp; open source",
   scroll:"Scroll",
   chip_cpu:"Idle CPU", chip2:"1 item copied",
   win_title:"File Butler", tab1:"Projects", tab2:"Home",
@@ -1162,8 +1202,8 @@ var EN = {
   f5t:"Space analysis", f5d:"Measure a folder in one click: a ring chart plus a ranked list you can drill into. Spot a big file and reveal it or send it to the Trash right there.",
   f6t:"Grouping and sorting", f6d:"Group by kind, date, size or tag, and change the sort order any time. Big folders become scannable.",
   f7t:"Keyboard first", f7d:"Tab to switch panes, F5 to copy, F6 to move, ⌘1–⌘4 for views, ⇧⌘P to preview, ⌘F to search, ⌘Z to undo. Your hands never leave the keyboard.",
-  f8t:"Plays well with Finder", f8d:"Drag between panes, or to and from Finder. Tags, file types and icons all come from the system, so nothing looks foreign.",
-  f9t:"Native and light", f9d:"Written in Swift and compiled for Apple silicon and Intel alike. 0% CPU at idle, no background wakeups, about 63 MB of memory.",
+  f8t:"Plays well with Finder", f8d:"Drag between panes, or to and from Finder. Tags, file types and icons all come from the system, so nothing looks foreign. Same-disk drags move, cross-disk drags copy (hold ⌥ to copy), name clashes get Finder's own Keep Both / Stop / Replace prompt, and big copies show a progress window you can stop at any time.",
+  f9t:"Native and light", f9d:"Written in Swift and compiled for Apple silicon and Intel alike. 0% CPU at idle, almost no background wakeups, about 80 MB of memory.",
   st_eb:"The details", st_h2:"Four things you only notice once you use them",
   st_p:"Everything below is how the app actually works — no concept art.",
   s1k:"Preview", s1t:"See what's inside without opening it",
@@ -1173,13 +1213,13 @@ var EN = {
   s3k:"Search", s3t:"Type a few letters, get the file",
   s3d:"⌘F filters the current folder instantly; widen it to subfolders or the whole Mac when you need to. Finder tags are searchable too — click one in the sidebar to list every file with it.",
   s4k:"Performance", s4t:"Light enough to forget it's running",
-  s4d:"Measured on the same Mac: 0% CPU at idle, no background wakeups, about 63 MB of memory. A folder with 10,000 files loads in about 0.27 s.",
+  s4d:"Measured with v0.5.1 (Apple silicon Mac, both panes open): 0% CPU at idle, a single wakeup in 30 seconds, about 80 MB of memory. A folder with 10,000 files loads in about 0.4 s.",
   u_kind:"Kind", u_png:"PNG image", u_dim:"Dimensions", u_size:"Size", u_tagl:"Tags", u_tagv:"Design · Pending",
   u_t1:"Design", u_t2:"Pending", u_t3:"Finance", u_other:"Other",
   u_scope:"Whole Mac",
   u_fb:"File Butler", u_icpu:"Idle CPU", u_imem:"Memory", u_wake:"Idle wakeups", u_load:"Load 10,000 files",
-  u_loadv:"≈ 0.27 s (v0.2: ≈ 1.5 s)",
-  u_star:"* Measured on the same Mac. Finder's figure includes the desktop and system work it handles, so treat it as a rough reference.",
+  u_loadv:"≈ 0.4 s",
+  u_star:"Measured with v0.5.1 on an Apple silicon Mac, October 2026. Memory is the process footprint with both panes open. The 10,000-file figure is the median of 5 runs on a local APFS disk.", u_wakev:"1 in 30 s",
   sf_eb:"Safety", sf_h2:"Safe to hand over",
   sf_p:"File operations stay conservative, and mistakes are reversible. No black-box \"one-click clean\", no invisible background agent.",
   sf1t:"Never deletes outright", sf1d:"Deleting always moves items to the Trash, never permanently.",
@@ -1193,7 +1233,7 @@ var EN = {
   in3:"The app isn't notarized by Apple. The first time, right-click it in Applications and choose Open, or go to System Settings › Privacy & Security and click \"Open Anyway\". Or run this in Terminal:",
   copy:"Copy",
   fi_h2:"Give your files<br>a better home",
-  fi_p:"Free, open source, about 3 MB. Download and run — no sign-up, no account.",
+  fi_p:"Free, open source, about a 4 MB download. Download and run — no sign-up, no account.",
   fi_gh:"Read the source on GitHub",
   ft_rel:"Releases", ft_sib:"Mac Optimizer", ft_made:"vibe coded with ♥"
 };
