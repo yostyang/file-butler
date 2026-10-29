@@ -7,3 +7,4 @@
 - [x] 5 基准：cp -c 267ms，ditto 298ms，mv 196ms（2003 项）
 - [ ] 7 release.sh 0.5.0
 - [ ] 8 拷贝到 /workspace/fb-v05
+- 修复：画廊空白处右键（直接取鼠标下的 FBKeyView）。test.sh 第1次：自测53/53，界面117/1

@@ -277,6 +277,12 @@ enum RightClick {
             }
         }
     }
+    /// 鼠标下（画廊、分栏等 SwiftUI 视图背后）负责这一栏的 FBKeyView
+    static func keyViewUnder(_ root: NSView, _ p: NSPoint) -> FBKeyView? {
+        var h = root.hitTest(root.convert(p, from: root.superview))
+        while let v = h { if let k = v as? FBKeyView { return k }; h = v.superview }
+        return nil
+    }
     /// 返回 true 表示已经弹出了菜单（事件被消费）
     static func contextMenu(_ e: NSEvent, app: AppState) -> Bool {
         guard let w = e.window, let root = w.contentView?.superview else { return false }
@@ -292,6 +298,8 @@ enum RightClick {
             pane = i; urls = itemMenuURLs(t, u)
         } else if let m = live.first(where: { $0.bg }), let t = m.tab, let i = paneOf(t) {
             pane = i; bgDir = m.url
+        } else if let k = keyViewUnder(root, p) {
+            pane = k.pane
         } else if let i = PaneFocus.pane(at: p, in: w, app: app), app.responders[i].v is FBKeyView,
                   let k = app.responders[i].v, k.convert(k.bounds, to: nil).contains(p) {
             pane = i
