@@ -261,7 +261,16 @@ enum RightClick {
             guard let a = app else { return e }
             if let w = e.window, !w.acceptsMouseMovedEvents, w.toolbar != nil { w.acceptsMouseMovedEvents = true }
             switch e.type {
-            case .mouseMoved, .scrollWheel, .keyDown: PaneFocus.follow(e, app: a); return e
+            case .mouseMoved, .scrollWheel: PaneFocus.follow(e, app: a); return e
+            case .keyDown:
+                PaneFocus.follow(e, app: a)
+                // 切换显示方式、关闭重命名框等之后，焦点可能短暂落在窗口本身：快捷键仍然作用于当前栏（访达的快捷键总是有效）
+                if let w = e.window, w.toolbar != nil, w.attachedSheet == nil, w.firstResponder === w || w.firstResponder == nil, a.active < a.controllers.count {
+                    let c = a.controllers[a.active]
+                    let handled = e.modifierFlags.contains(.command) ? c.handleKeyEquivalent(e) : c.handleKeyDown(e, isTable: false)
+                    if handled { DispatchQueue.main.async { a.focusActiveTable() }; return nil }
+                }
+                return e
             default:
                 guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
                 PaneFocus.follow(e, app: a)

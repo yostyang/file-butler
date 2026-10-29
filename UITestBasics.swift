@@ -252,12 +252,23 @@ extension UITestRunner {
             check("选择：⌘A 全选", tl.selection.count == tl.display.count)
             // 框选（列表从空白处拖）
             tl.selection = []; await settle(0.2)
-            let below = tv.convert(NSPoint(x: 300, y: tv.rect(ofRow: n - 1).maxY + 30), to: nil)
+            let below = tv.convert(NSPoint(x: tv.bounds.width / 2, y: tv.rect(ofRow: n - 1).maxY + 30), to: nil)
             let top = rowPt(0)
             NSApp.postEvent(mouse(.leftMouseDown, below), atStart: false)
             for i in 1...6 { let f = CGFloat(i) / 6; NSApp.postEvent(mouse(.leftMouseDragged, NSPoint(x: below.x, y: below.y + (top.y - below.y) * f)), atStart: false) }
             NSApp.postEvent(mouse(.leftMouseUp, top), atStart: false); await settle(0.5)
-            check("选择（列表）：从空白处框选", tl.selection.count >= 2, "\(tl.selection.count)")
+            check("选择（列表）：从空白处框选", tl.selection.count >= 2 && tl.selection.count == tv.selectedRowIndexes.count, "选中 \(tl.selection.count) 项（经 NSApp 事件队列注入按下-拖动-松开，走真实 mouseDown 跟踪循环）")
+            // 只框住最后两行：应恰好选中 2 项；⌘ 框选在已有选择上反选
+            tl.selection = []; await settle(0.2)
+            tv.scrollRowToVisible(n - 1); await settle(0.2)
+            let below2 = tv.convert(NSPoint(x: tv.bounds.width / 2, y: tv.rect(ofRow: n - 1).maxY + 30), to: nil)
+            let mid = tv.convert(NSPoint(x: tv.bounds.width / 2, y: tv.rect(ofRow: n - 2).midY), to: nil)
+            NSApp.postEvent(mouse(.leftMouseDown, below2), atStart: false)
+            for i in 1...6 { let f = CGFloat(i) / 6; NSApp.postEvent(mouse(.leftMouseDragged, NSPoint(x: below2.x, y: below2.y + (mid.y - below2.y) * f)), atStart: false) }
+            NSApp.postEvent(mouse(.leftMouseUp, mid), atStart: false); await settle(0.5)
+            check("选择（列表）：框选范围准确（只框两行 = 选中 2 项）", tl.selection.count == 2, "\(tl.selection.count)")
+            NSApp.postEvent(mouse(.leftMouseDown, below2), atStart: false); NSApp.postEvent(mouse(.leftMouseUp, below2), atStart: false); await settle(0.4)
+            check("选择（列表）：点空白处取消选择", tl.selection.isEmpty, "\(tl.selection.count)")
         }
         // 文件操作
         mkfile(L.appendingPathComponent("操作.txt"), "op")
@@ -379,7 +390,7 @@ extension UITestRunner {
         t0 = Date(); press("v", 9, .command)
         ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 && self.app.panes[0].tab.display.isEmpty }
         pr = probe.stop()
-        check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max), t0: t0)
+        check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max) + (ms >= 59000 ? " [左栏显示 \(app.panes[0].tab.display.count) 磁盘 \(names(B).count)，右栏显示 \(app.panes[1].tab.display.count) 磁盘 \(names(T).count)，idle=\(idle())]" : ""), t0: t0)
         perf["move"] = Double(ms); perf["moveMaxBlock"] = pr.max
         // 大目录滚动（列表 / 图标）
         if let (tv, _) = tableCoord(1) {

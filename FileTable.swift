@@ -17,11 +17,45 @@ final class FBTableView: NSTableView {
         if window?.firstResponder === self, let c = coord, c.ctrl.handleKeyEquivalent(e) { return true }
         return super.performKeyEquivalent(with: e)
     }
+    /// 和访达一样：在列表空白处（最后一行下面）按下拖动 = 框选。NSTableView 自带的行为在空白处只会清除选择。
+    override func mouseDown(with e: NSEvent) {
+        let p = convert(e.locationInWindow, from: nil)
+        guard row(at: p) < 0, e.clickCount == 1, let w = window else { super.mouseDown(with: e); return }
+        w.makeFirstResponder(self)
+        let f = e.modifierFlags
+        let toggle = f.contains(.command), extend = f.contains(.shift)
+        let base = selectedRowIndexes
+        if !toggle && !extend { selectRowIndexes([], byExtendingSelection: false) }
+        let band = MarqueeView(frame: NSRect(origin: p, size: .zero)); addSubview(band)
+        defer { band.removeFromSuperview() }
+        while let ev = w.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let q = convert(ev.locationInWindow, from: nil)
+            let r = NSRect(x: min(p.x, q.x), y: min(p.y, q.y), width: abs(q.x - p.x), height: abs(q.y - p.y))
+            band.frame = r
+            if ev.type == .leftMouseDragged { autoscroll(with: ev) }
+            var hit = IndexSet()
+            // 纯竖直拖动时矩形宽度为 0，也要算作框住了经过的行
+            let rr = rows(in: NSRect(x: r.minX, y: r.minY, width: max(r.width, 1), height: max(r.height, 1)))
+            if rr.length > 0 { for i in rr.location..<(rr.location + rr.length) where coord?.item(i) != nil { hit.insert(i) } }
+            let sel: IndexSet = toggle ? base.symmetricDifference(hit) : (extend ? base.union(hit) : hit)
+            if sel != selectedRowIndexes { selectRowIndexes(sel, byExtendingSelection: false) }
+            if ev.type == .leftMouseUp { break }
+        }
+    }
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) { panel.dataSource = coord?.ctrl; panel.delegate = coord?.ctrl }
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { }
 }
 
+/// 框选矩形（和访达一样的半透明强调色）
+final class MarqueeView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlAccentColor.withAlphaComponent(0.15).setFill(); bounds.fill()
+        NSColor.controlAccentColor.withAlphaComponent(0.6).setStroke()
+        let p = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)); p.lineWidth = 1; p.stroke()
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
 /// 列表单元格：直接绘制图标和文字（不用 NSTextField / NSImageView 子视图）。
 /// 大目录批量移入、移出时要一次创建几十个单元格，子视图方案每格要建 2~3 个控件并做布局，绘制方案几乎没有开销。
 /// 只有就地重命名时才临时放一个可编辑的 NSTextField。
