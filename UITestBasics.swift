@@ -190,7 +190,8 @@ extension UITestRunner {
         press("a", 0, .command); await settle(0.3)
         check("活动栏：鼠标在右栏时 ⌘A 作用于右栏", app.panes[1].tab.selection.count == app.panes[1].tab.display.count && app.panes[0].tab.selection == leftSel, "右=\(app.panes[1].tab.selection.count) 左=\(app.panes[0].tab.selection.count)")
         await moveMouse(to: center(0))
-        check("活动栏：鼠标回到左栏 → 左栏活动", app.active == 0)
+        let backMs = await waitUntil(2) { self.app.active == 0 }
+        check("活动栏：鼠标回到左栏 → 左栏活动", app.active == 0, "\(backMs + 250)ms")
         t0 = Date()
         press("c", 8, .command); await moveMouse(to: center(1)); press("v", 9, .command)
         ms = await waitUntil { exists(R.appendingPathComponent("b1 2.txt")) || (exists(R.appendingPathComponent("b1.txt")) && names(R).filter { $0.hasPrefix("b1") }.count >= 2) }
