@@ -164,8 +164,7 @@ struct IconCollection: NSViewRepresentable {
             return sections[ip.section].1[ip.item]
         }
         var size: CGFloat { CGFloat(app.iconSize) }
-        func sync() { perfMark("sync \(Self.self) \(pane)") { sync0() } }
-        func sync0() {
+        func sync() {
             guard let cv = cv else { return }
             if lastVersion != tab.version || lastSize != app.iconSize {
                 if editingURL != nil { return }

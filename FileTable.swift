@@ -243,8 +243,7 @@ struct FileTable: NSViewRepresentable {
         }
         var selectedURLs: [URL] { table?.selectedRowIndexes.compactMap { item($0)?.url } ?? [] }
 
-        func sync() { perfMark("sync \(Self.self) \(pane)") { sync0() } }
-        func sync0() {
+        func sync() {
             guard let tv = table else { return }
             if lastVersion != tab.version {
                 // 正在就地重命名时不要刷新表格（reloadData 会结束编辑），改完名再刷新
@@ -397,8 +396,7 @@ struct FileTable: NSViewRepresentable {
             guard !suppress, let d = tv.sortDescriptors.first, let k = SortKey(rawValue: d.key ?? "") else { return }
             tab.setSort(k, asc: d.ascending)
         }
-        func tableViewSelectionDidChange(_ n: Notification) { perfMark("table selDidChange") { selDidChange() } }
-        func selDidChange() {
+        func tableViewSelectionDidChange(_ n: Notification) {
             guard !suppress else { return }
             let s = Set(selectedURLs); pushedSelection = s
             tab.selection = s

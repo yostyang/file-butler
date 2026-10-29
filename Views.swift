@@ -67,7 +67,7 @@ struct ViewModePicker: View {
     @EnvironmentObject var app: AppState
     let tab: TabModel
     @ObservedObject var chrome: TabChrome
-    var body: some View { let _ = perfDebug ? print("TBBODY ViewModePicker") : ();
+    var body: some View {
         Picker("显示方式", selection: Binding(get: { chrome.viewMode }, set: { app.setViewMode($0) })) {
             ForEach(ViewMode.allCases, id: \.self) { m in Label(m.title, systemImage: m.symbol).labelStyle(.iconOnly).tag(m) }
         }.pickerStyle(.segmented).help("图标 ⌘1 · 列表 ⌘2 · 分栏 ⌘3 · 画廊 ⌘4")
@@ -76,7 +76,7 @@ struct ViewModePicker: View {
 struct GroupMenu: View {
     let tab: TabModel
     @ObservedObject var chrome: TabChrome
-    var body: some View { let _ = perfDebug ? print("TBBODY GroupMenu") : ();
+    var body: some View {
         Menu {
             Toggle("使用分组", isOn: Binding(get: { chrome.groupKey != .none }, set: { tab.groupKey = $0 ? .kind : .none }))
             Picker("分组方式", selection: Binding(get: { chrome.groupKey }, set: { tab.groupKey = $0 })) { ForEach(GroupKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
@@ -91,7 +91,7 @@ struct ShareButton: View {
     let tab: TabModel
     @ObservedObject var chrome: TabChrome
     // 共享面板在点按时才创建（选中几千个项目时不在每次刷新界面时构建 ShareLink）
-    var body: some View { let _ = perfDebug ? print("TBBODY ShareButton") : ();
+    var body: some View {
         Button {
             let urls = tab.selectedURLs
             guard !urls.isEmpty, let w = NSApp.keyWindow, let v = w.contentView else { NSSound.beep(); return }
@@ -106,7 +106,7 @@ struct TagButton: View {
     @EnvironmentObject var app: AppState
     let tab: TabModel
     @State var show = false
-    var body: some View { let _ = perfDebug ? print("TBBODY TagButton") : ();
+    var body: some View {
         Button { show.toggle() } label: { Label("标签", systemImage: "tag") }.help("设置标签")
             .popover(isPresented: $show, arrowEdge: .bottom) { TagPopover(tab: tab) }
             .onChange(of: app.tagPopoverTick) { _ in show = true }
@@ -117,7 +117,7 @@ struct MoreMenu: View {
     let tab: TabModel
     let pane: Int
     // 菜单在点按时才构建（不在每次选中变化时查询「打开方式」等，避免卡顿）
-    var body: some View { let _ = perfDebug ? print("TBBODY MoreMenu") : ();
+    var body: some View {
         Button { popUp() } label: { Label("更多", systemImage: "ellipsis.circle") }.help("更多操作")
     }
     func popUp() {
@@ -140,7 +140,7 @@ struct SearchBox: View {
     @ObservedObject var chrome: TabChrome
     @State var text = ""
     @FocusState var focused: Bool
-    var body: some View { let _ = perfDebug ? print("TBBODY SearchBox") : ();
+    var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
@@ -176,8 +176,7 @@ struct SearchBox: View {
 // MARK: Sidebar
 struct SidebarView: View {
     @EnvironmentObject var app: AppState
-    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body SidebarView: \(ms)") } }; return body0 }
-    @ViewBuilder var body0: some View {
+    var body: some View {
         List {
             Section("个人收藏") { ForEach(app.favorites, id: \.self) { row($0, name: $0.path.hasSuffix("CloudDocs") ? "iCloud 云盘" : nil) } }
             Section {
@@ -295,8 +294,7 @@ struct TabContent: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let index: Int
-    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body TabContent: \(ms)") } }; return body0 }
-    @ViewBuilder var body0: some View {
+    var body: some View {
         VStack(spacing: 0) {
             if app.showPathBar || app.editingPane == index { PathBar(tab: tab, index: index) }
             if tab.searchActive { SearchScopeBar(tab: tab) }
@@ -471,8 +469,7 @@ struct PathSegmentsView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let index: Int, width: CGFloat
-    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body PathSegmentsView: \(ms)") } }; return body0 }
-    @ViewBuilder var body0: some View {
+    var body: some View {
         let target = tab.pathTarget
         let segs = pathBarLayout(pathURLs(target), width: width)
         HStack(spacing: 0) {
@@ -522,7 +519,7 @@ struct StatusContent: View {
     @ObservedObject var status: OpStatus
     let dual: Bool, active: Int
     var body: some View {
-        let sum = perfMark("status summary") { tab.selectionSummary }
+        let sum = tab.selectionSummary
         HStack(spacing: 10) {
             if dual { Text(active == 0 ? "左栏" : "右栏").fontWeight(.semibold).foregroundStyle(accentA) }
             Text("\(tab.display.count) 个项目")

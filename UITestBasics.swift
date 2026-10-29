@@ -363,11 +363,6 @@ extension UITestRunner {
         var pr = probe.stop()
         check("性能：拷贝粘贴 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && shown(1).count == N + 3, String(format: "耗时 %dms，主线程最长阻塞 %.1fms，p99 %.1fms", ms, pr.max, pr.p99), t0: t0)
         perf["copy"] = Double(ms); perf["copyMaxBlock"] = pr.max
-        if ProcessInfo.processInfo.environment["FB_SELLOOP"] != nil {
-            print("SELLOOP START")
-            for _ in 0..<30 { let t = app.panes[1].tab; t.items = []; t.recompute(); await settle(0.1); t.selection = Set(names(T).map { T.appendingPathComponent($0).standardizedFileURL }); t.reload(); await settle(0.25) }
-            print("SELLOOP END")
-        }
         // ⌘A 全选 2003 项
         probe = MainThreadProbe(); probe.start(); t0 = Date()
         press("a", 0, .command); await settle(0.5)

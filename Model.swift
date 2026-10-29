@@ -409,7 +409,7 @@ final class TabModel: ObservableObject, Identifiable {
             let sorted = sortItems(res, key: key, asc: ascending)   // 排序也在后台完成
             let free = freeSpace(p)
             let all = Set(res.map { $0.url })   // 选中项比对用的集合也在后台建好
-            DispatchQueue.main.async { perfMark("reload main \(p.lastPathComponent) \(res.count)") {
+            DispatchQueue.main.async {
                 guard tok == self.loadToken else { return }
                 if self.error != err { self.error = err }
                 if self.permissionDenied != denied { self.permissionDenied = denied }
@@ -430,7 +430,7 @@ final class TabModel: ObservableObject, Identifiable {
                 self.recompute()
                 self.app?.noteTags(res)
                 self.watch()
-            } }
+            }
         }
     }
     private func watch() {
@@ -707,7 +707,7 @@ final class AppState: ObservableObject {
         var urls: [URL], cut: Bool
         if let p = clipPending { urls = p.1; cut = p.2 || forceMove; if p.2 { clipPending = (p.0, p.1, false) } }
         else {
-            urls = ownClip?.0 == pb.changeCount ? ownClip!.1 : perfMark("paste read") { fileURLs(pb) }
+            urls = ownClip?.0 == pb.changeCount ? ownClip!.1 : fileURLs(pb)
             cut = pb.changeCount == cutChangeCount || forceMove
         }
         guard !urls.isEmpty else { NSSound.beep(); return }
@@ -828,7 +828,7 @@ final class AppState: ObservableObject {
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
         opQueue.async {
             let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv) ?? (.stop, false) })
-            DispatchQueue.main.async { perfMark("transfer done") {
+            DispatchQueue.main.async {
                 self.endOp(p); resetDisplayNames()
                 var ops: [UndoOp] = []
                 if !r.replaced.isEmpty { ops.append(.trashed(r.replaced)) }
@@ -840,7 +840,7 @@ final class AppState: ObservableObject {
                 for p in self.panes { for t in p.tabs where t.path.path == dir.standardizedFileURL.path && !landed.isEmpty { t.selection = landed } }
                 self.reload(dirs: [dir] + srcDirs)
                 if !r.errs.isEmpty { self.showError("部分操作未完成", r.errs.joined(separator: "\n")) }
-            } }
+            }
         }
     }
     func trash(_ urls: [URL]) {
@@ -849,13 +849,13 @@ final class AppState: ObservableObject {
         let dirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
         opQueue.async {
             let r = FileOps.trash(urls, progress: p)
-            DispatchQueue.main.async { perfMark("trash done") {
+            DispatchQueue.main.async {
                 self.endOp(p)
                 if !r.done.isEmpty { self.undoStack.append(.trashed(r.done)) }
-                perfMark("trash remove") { self.removeFromLists(r.done.map { $0.0 }) }
-                perfMark("trash reload") { self.reload(dirs: dirs) }
+                self.removeFromLists(r.done.map { $0.0 })
+                self.reload(dirs: dirs)
                 if !r.errs.isEmpty { self.showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
-            } }
+            }
         }
     }
     /// 访达行为：在当前显示的文件夹（分栏视图里是最右侧的文件夹）新建「未命名文件夹」，选中并直接进入就地重命名。

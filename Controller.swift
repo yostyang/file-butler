@@ -49,8 +49,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     }
 
     // MARK: keys
-    func handleKeyDown(_ e: NSEvent, isTable: Bool) -> Bool { perfMark("keydown \(e.keyCode)") { handleKeyDown0(e, isTable: isTable) } }
-    func handleKeyDown0(_ e: NSEvent, isTable: Bool) -> Bool {
+    func handleKeyDown(_ e: NSEvent, isTable: Bool) -> Bool {
         let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
         switch e.keyCode {
         case 49: quickLook(); return true
@@ -73,8 +72,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         default: return false
         }
     }
-    func handleKeyEquivalent(_ e: NSEvent) -> Bool { perfMark("key \(e.charactersIgnoringModifiers ?? "")") { handleKeyEquivalent0(e) } }
-    func handleKeyEquivalent0(_ e: NSEvent) -> Bool {
+    func handleKeyEquivalent(_ e: NSEvent) -> Bool {
         let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
         // 访达：⌘C 之后按 ⌥⌘V = 移动到这里
         if f == [.command, .option], e.charactersIgnoringModifiers?.lowercased() == "v" { app.paste(into: pasteDir, forceMove: true); return true }

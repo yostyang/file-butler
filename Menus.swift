@@ -256,7 +256,6 @@ enum RightClick {
     static func install(_ a: AppState? = nil) {
         if let a = a { app = a }
         guard monitor == nil else { return }
-        StallWatch.install()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .mouseMoved, .scrollWheel, .keyDown]) { e in
             guard let a = app else { return e }
             if let w = e.window, !w.acceptsMouseMovedEvents, w.toolbar != nil { w.acceptsMouseMovedEvents = true }
