@@ -218,3 +218,15 @@ enum StallWatch {
         CFRunLoopAddObserver(CFRunLoopGetMain(), obs, .commonModes)
     }
 }
+
+
+/// 文件夹显示名缓存：路径栏、标签页标题每次刷新都要用，直接查询会走 LaunchServices 读磁盘
+private var displayNameCache: [String: String] = [:]
+func cachedDisplayName(_ path: String) -> String {
+    if let n = displayNameCache[path] { return n }
+    let n = FileManager.default.displayName(atPath: path)
+    if displayNameCache.count > 2000 { displayNameCache.removeAll() }
+    displayNameCache[path] = n
+    return n
+}
+func resetDisplayNames() { displayNameCache.removeAll() }

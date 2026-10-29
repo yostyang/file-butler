@@ -22,8 +22,59 @@ final class FBTableView: NSTableView {
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { }
 }
 
-final class NameCell: NSTableCellView {
-    let tagField = NSTextField(labelWithString: "")
+/// 列表单元格：直接绘制图标和文字（不用 NSTextField / NSImageView 子视图）。
+/// 大目录批量移入、移出时要一次创建几十个单元格，子视图方案每格要建 2~3 个控件并做布局，绘制方案几乎没有开销。
+/// 只有就地重命名时才临时放一个可编辑的 NSTextField。
+final class DrawCell: NSTableCellView {
+    var text = "" { didSet { if text != oldValue { needsDisplay = true; setAccessibilityLabel(text) } } }
+    var icon: NSImage? { didSet { if icon !== oldValue { needsDisplay = true } } }
+    var tags = NSAttributedString() { didSet { if tags != oldValue { needsDisplay = true } } }
+    var secondary = false, mono = false, rightAlign = false, middleTrunc = false
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { if backgroundStyle != oldValue { needsDisplay = true } } }
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { false }
+    var editor: NSTextField?
+    var font: NSFont { mono ? .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular) : .systemFont(ofSize: NSFont.systemFontSize) }
+    var textX: CGFloat { icon != nil || isName ? 24 : 2 }
+    var isName = false
+    func textRect() -> NSRect {
+        let h = ceil(font.ascender - font.descender + font.leading) + 1
+        return NSRect(x: textX, y: floor((bounds.height - h) / 2), width: max(0, bounds.width - textX - 2), height: h)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let emph = backgroundStyle == .emphasized
+        if let ic = icon {
+            ic.draw(in: NSRect(x: 2, y: floor((bounds.height - 16) / 2), width: 16, height: 16), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        guard editor == nil else { return }
+        let ps = NSMutableParagraphStyle()
+        ps.lineBreakMode = middleTrunc ? .byTruncatingMiddle : .byTruncatingTail
+        ps.alignment = rightAlign ? .right : .left
+        let color: NSColor = emph ? .alternateSelectedControlTextColor : (secondary ? .secondaryLabelColor : .labelColor)
+        var r = textRect()
+        if tags.length > 0 {
+            let tw = ceil(tags.size().width)
+            let nw = min(ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2, max(0, r.width - tw - 4))
+            let tr = NSRect(x: r.minX + nw + 4, y: r.minY, width: tw, height: r.height)
+            tags.draw(with: tr, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            r.size.width = nw
+        }
+        (text as NSString).draw(with: r, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: [.font: font, .foregroundColor: color, .paragraphStyle: ps])
+    }
+    /// 就地重命名：放一个真正的文本框在文字的位置
+    func beginEditing() -> NSTextField {
+        if let e = editor { return e }
+        let tf = NSTextField(string: text)
+        tf.font = font; tf.isBordered = true; tf.drawsBackground = true; tf.backgroundColor = .textBackgroundColor
+        tf.lineBreakMode = .byClipping; tf.usesSingleLineMode = true; tf.cell?.isScrollable = true
+        var r = textRect(); r.origin.x -= 2; r.size.width += 2; r.size.height = max(r.height, 20); r.origin.y = floor((bounds.height - r.height) / 2)
+        tf.frame = r; tf.autoresizingMask = [.width]
+        addSubview(tf); editor = tf; textField = tf; needsDisplay = true
+        return tf
+    }
+    func endEditing() {
+        editor?.removeFromSuperview(); editor = nil; textField = nil; needsDisplay = true
+    }
 }
 
 struct FileTable: NSViewRepresentable {
@@ -75,6 +126,8 @@ struct FileTable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
         let app: AppState; var tab: TabModel; var pane: Int
         var rows: [Row] = []; var lastVersion = -1; var suppress = false
+        /// 表格自己刚写回的选中集合：SwiftUI 回调 updateNSView 时不必再逐项比较一遍
+        var pushedSelection: Set<URL> = []
         weak var table: FBTableView?
         var ctrl: PaneController { app.controllers[pane] }
 
@@ -163,15 +216,17 @@ struct FileTable: NSViewRepresentable {
                 // 正在就地重命名时不要刷新表格（reloadData 会结束编辑），改完名再刷新
                 if editingURL != nil { return }
                 lastVersion = tab.version
+                let old = rows
                 if tab.groupKey == .none || tab.isGlobalSearch { rows = tab.display.map { .item($0) } }
                 else { rows = tab.groups.flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
                 layoutColumns()
                 suppress = true
                 let d = NSSortDescriptor(key: tab.sortKey.rawValue, ascending: tab.asc)
                 if tv.sortDescriptors.first != d { tv.sortDescriptors = [d] }
-                tv.reloadData(); suppress = false
+                if !applyIncremental(tv, old: old) { tv.reloadData() }
+                suppress = false
                 applySelection()
-            } else if Set(selectedURLs) != tab.selection { applySelection() }
+            } else if tab.selection != pushedSelection, Set(selectedURLs) != tab.selection { applySelection() }
             if app.inlineRename != nil && editingURL == nil { DispatchQueue.main.async { self.startInlineRename() } }
         }
 
@@ -185,10 +240,10 @@ struct FileTable: NSViewRepresentable {
             let col = tv.column(withIdentifier: NSUserInterfaceItemIdentifier("name"))
             guard col >= 0 else { return }
             tv.scrollRowToVisible(row)
-            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? NSTableCellView, let tf = cell.textField, let it = item(row) else { if TestEnv.debug { print("DEBUG no cell row=\(row)") }; return }
+            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? DrawCell, let it = item(row) else { if TestEnv.debug { print("DEBUG no cell row=\(row)") }; return }
             if TestEnv.debug { print("DEBUG editing row=\(row) win=\(tv.window != nil)") }
             editingURL = u; cancelled = false
-            tf.isEditable = true; tf.isSelectable = true; tf.drawsBackground = true; tf.backgroundColor = .textBackgroundColor; tf.isBordered = true
+            let tf = cell.beginEditing()
             tf.delegate = self
             tv.window?.makeFirstResponder(tf)
             tf.currentEditor()?.selectedRange = baseNameRange(it.name, isDir: it.isDir)
@@ -207,11 +262,52 @@ struct FileTable: NSViewRepresentable {
             guard let u = editingURL else { return }
             editingURL = nil
             let name = tf.stringValue
-            tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false; tf.delegate = nil
+            tf.delegate = nil
+            (tf.superview as? DrawCell)?.endEditing()
             app.inlineRename = nil
-            if commit { app.rename(u, to: name) } else { tf.stringValue = u.lastPathComponent }
+            if commit { app.rename(u, to: name) }
             sync()
             table?.window?.makeFirstResponder(table)
+        }
+        /// 只增删变化的行（和访达一样，批量移走/移入时不重建整个表格）；顺序有变化时返回 false 改用 reloadData
+        func applyIncremental(_ tv: NSTableView, old: [Row]) -> Bool {
+            func key(_ r: Row) -> String { switch r { case .header(let t, _): return "\u{1}" + t; case .item(let it): return it.url.path } }
+            guard !old.isEmpty, !rows.isEmpty, tv.numberOfRows == old.count else { return false }
+            let ok = old.map(key), nk = rows.map(key)
+            if ok == nk {
+                // 行没变：只刷新内容变了的可见行
+                let vis = tv.rows(in: tv.visibleRect)
+                var idx = IndexSet()
+                for i in vis.location..<min(vis.location + vis.length, rows.count) {
+                    if case .item(let a) = old[i], case .item(let b) = rows[i], a == b { continue }
+                    idx.insert(i)
+                }
+                if !idx.isEmpty { tv.reloadData(forRowIndexes: idx, columnIndexes: IndexSet(integersIn: 0..<tv.numberOfColumns)) }
+                return true
+            }
+            let oset = Set(ok), nset = Set(nk)
+            let kept0 = ok.filter { nset.contains($0) }, kept1 = nk.filter { oset.contains($0) }
+            guard kept0 == kept1, !kept0.isEmpty else { return false }
+            var removed = IndexSet(), inserted = IndexSet()
+            for (i, k) in ok.enumerated() where !nset.contains(k) { removed.insert(i) }
+            for (i, k) in nk.enumerated() where !oset.contains(k) { inserted.insert(i) }
+            tv.beginUpdates()
+            if !removed.isEmpty { tv.removeRows(at: removed, withAnimation: []) }
+            if !inserted.isEmpty { tv.insertRows(at: inserted, withAnimation: []) }
+            tv.endUpdates()
+            // 保留下来的行若属性变了（大小、日期、分组计数等），只刷新可见部分
+            let vis = tv.rows(in: tv.visibleRect)
+            var map: [String: Row] = [:]; map.reserveCapacity(old.count)
+            for r in old { map[key(r)] = r }
+            var idx = IndexSet()
+            for i in vis.location..<min(vis.location + vis.length, rows.count) where !inserted.contains(i) {
+                switch (map[nk[i]], rows[i]) {
+                case (.item(let a)?, .item(let b)) where a == b: continue
+                default: idx.insert(i)
+                }
+            }
+            if !idx.isEmpty { tv.reloadData(forRowIndexes: idx, columnIndexes: IndexSet(integersIn: 0..<tv.numberOfColumns)) }
+            return true
         }
         func applySelection() {
             guard let tv = table else { return }
@@ -237,43 +333,28 @@ struct FileTable: NSViewRepresentable {
             guard let it = item(row) else { return nil }
             let id = col?.identifier.rawValue ?? ""
             let cid = NSUserInterfaceItemIdentifier("c_" + id)
-            var cell = tv.makeView(withIdentifier: cid, owner: nil) as? NSTableCellView
+            var cell = tv.makeView(withIdentifier: cid, owner: nil) as? DrawCell
             if cell == nil {
-                let c: NSTableCellView = id == "name" ? NameCell() : NSTableCellView(); c.identifier = cid
-                let tf = NSTextField(labelWithString: ""); tf.translatesAutoresizingMaskIntoConstraints = false
-                tf.lineBreakMode = id == "name" || id == "path" ? .byTruncatingMiddle : .byTruncatingTail
-                c.addSubview(tf); c.textField = tf
-                if let nc = c as? NameCell {
-                    let iv = NSImageView(); iv.translatesAutoresizingMaskIntoConstraints = false; nc.addSubview(iv); nc.imageView = iv
-                    let tg = nc.tagField; tg.translatesAutoresizingMaskIntoConstraints = false; nc.addSubview(tg)
-                    tg.setContentHuggingPriority(.required, for: .horizontal); tg.setContentCompressionResistancePriority(.required, for: .horizontal)
-                    tf.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-                    NSLayoutConstraint.activate([iv.leadingAnchor.constraint(equalTo: nc.leadingAnchor, constant: 2), iv.centerYAnchor.constraint(equalTo: nc.centerYAnchor),
-                        iv.widthAnchor.constraint(equalToConstant: 16), iv.heightAnchor.constraint(equalToConstant: 16),
-                        tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 6), tf.centerYAnchor.constraint(equalTo: nc.centerYAnchor),
-                        tg.leadingAnchor.constraint(equalTo: tf.trailingAnchor, constant: 4), tg.trailingAnchor.constraint(lessThanOrEqualTo: nc.trailingAnchor, constant: -2),
-                        tg.centerYAnchor.constraint(equalTo: nc.centerYAnchor)])
-                } else {
-                    tf.textColor = .secondaryLabelColor
-                    tf.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-                    if id == "size" { tf.alignment = .right }
-                    NSLayoutConstraint.activate([tf.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 2), tf.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -2), tf.centerYAnchor.constraint(equalTo: c.centerYAnchor)])
-                }
+                let c = DrawCell(); c.identifier = cid
+                c.isName = id == "name"; c.middleTrunc = id == "name" || id == "path"
+                c.secondary = id != "name"; c.mono = id != "name"; c.rightAlign = id == "size"
+                c.setAccessibilityElement(true); c.setAccessibilityRole(.staticText)
                 cell = c
             }
-            if !samePath(editingURL, it.url), let tf = cell?.textField, tf.isEditable { tf.isEditable = false; tf.drawsBackground = false; tf.isBordered = false }
+            guard let c = cell else { return nil }
+            if c.editor != nil && !samePath(editingURL, it.url) { c.endEditing() }
             switch id {
             case "name":
-                cell?.textField?.stringValue = it.name
-                cell?.imageView?.image = ThumbCache.listIcon(it)
-                (cell as? NameCell)?.tagField.attributedStringValue = tagDots(it.tags)
-            case "date": cell?.textField?.stringValue = fmtDate(it.modified)
-            case "size": cell?.textField?.stringValue = it.isFolderLike ? "--" : fmtBytes(it.size)
-            case "path": cell?.textField?.stringValue = (it.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
-            default: cell?.textField?.stringValue = it.kind
+                c.text = it.name
+                c.icon = ThumbCache.listIcon(it)
+                c.tags = it.tags.isEmpty ? NSAttributedString() : tagDots(it.tags)
+            case "date": c.text = fmtDate(it.modified)
+            case "size": c.text = it.isFolderLike ? "--" : fmtBytes(it.size)
+            case "path": c.text = (it.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+            default: c.text = it.kind
             }
-            cell?.alphaValue = it.hidden ? 0.5 : 1
-            return cell
+            c.alphaValue = it.hidden ? 0.5 : 1
+            return c
         }
         func tableView(_ tv: NSTableView, typeSelectStringFor col: NSTableColumn?, row: Int) -> String? {
             col?.identifier.rawValue == "name" ? item(row)?.name : nil
@@ -285,7 +366,8 @@ struct FileTable: NSViewRepresentable {
         func tableViewSelectionDidChange(_ n: Notification) { perfMark("table selDidChange") { selDidChange() } }
         func selDidChange() {
             guard !suppress else { return }
-            tab.selection = Set(selectedURLs)
+            let s = Set(selectedURLs); pushedSelection = s
+            tab.selection = s
             if let r = table?.selectedRow, let it = item(r) { tab.anchor = it.url }
         }
 

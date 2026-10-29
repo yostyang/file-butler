@@ -281,18 +281,23 @@ final class TabModel: ObservableObject, Identifiable {
     @Published var loading = false
     @Published var error: String?
     @Published var permissionDenied = false
-    @Published var selection: Set<URL> = [] { didSet { if selection != oldValue { app?.selectionDidChange(self) } } }
+    @Published var selection: Set<URL> = [] { didSet { if selection != oldValue { app?.selectionDidChange(self); let has = !selection.isEmpty
+        // 工具栏按钮的可用状态放到下一轮刷新（不和列表的大批量更新挤在同一帧）
+        if has != chrome.hasSelection { DispatchQueue.main.async { [weak self] in guard let self = self else { return }; self.chrome.set(\.hasSelection, !self.selection.isEmpty) } } } } }
     @Published var version = 0
-    @Published var viewMode: ViewMode { didSet { app?.saveState() } }
-    @Published var groupKey: GroupKey = .none { didSet { recompute() } }
-    @Published var searchText = ""
+    @Published var viewMode: ViewMode { didSet { app?.saveState(); chrome.set(\.viewMode, viewMode) } }
+    @Published var groupKey: GroupKey = .none { didSet { recompute(); chrome.set(\.groupKey, groupKey) } }
+    @Published var searchText = "" { didSet { chrome.set(\.searchText, searchText) } }
     @Published var searchScope: SearchScope = .folder { didSet { if searchScope != oldValue { refreshSearch() } } }
-    @Published var tagFilter: String?
+    @Published var tagFilter: String? { didSet { chrome.set(\.tagFilter, tagFilter) } }
+    /// 工具栏只观察这个小对象：选中、列表内容变化时工具栏不重排（大目录 ⌘A、批量操作不卡）
+    let chrome = TabChrome()
     @Published var searchResults: [FileItem] = []
     @Published var searching = false
     @Published var columnChain: [URL] = []
     var back: [URL] = [], fwd: [URL] = []
-    var sortKey: SortKey = .name, asc = true
+    var sortKey: SortKey = .name { didSet { chrome.set(\.sortKey, sortKey) } }
+    var asc = true { didSet { chrome.set(\.asc, asc) } }
     var anchor: URL?
     var freeBytes: Int64?
     private var cacheVersion = -1
@@ -318,7 +323,7 @@ final class TabModel: ObservableObject, Identifiable {
     var title: String {
         if let t = tagFilter { return "标签：\(t)" }
         let p = viewMode == .column ? (columnChain.last ?? path) : path
-        return p.path == "/" ? "/" : FileManager.default.displayName(atPath: p.path)
+        return p.path == "/" ? "/" : cachedDisplayName(p.path)
     }
     /// 路径栏显示的目标（访达行为）：分栏视图里是最深的选中项；其他视图是当前文件夹 + 单个选中项。
     var pathTarget: URL {
@@ -355,6 +360,7 @@ final class TabModel: ObservableObject, Identifiable {
         self.path = path.standardizedFileURL; self.app = app; self.viewMode = mode
         if let k = SortKey(rawValue: UserDefaults.standard.string(forKey: "sortKey") ?? "") { sortKey = k }
         if UserDefaults.standard.object(forKey: "sortAsc") != nil { asc = UserDefaults.standard.bool(forKey: "sortAsc") }
+        chrome.viewMode = mode; chrome.sortKey = sortKey; chrome.asc = asc
         reload()
     }
     deinit { watcher?.cancel(); query?.stop(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
@@ -402,6 +408,7 @@ final class TabModel: ObservableObject, Identifiable {
             let (res, err, denied) = loadDirectory(p, hidden: hidden)
             let sorted = sortItems(res, key: key, asc: ascending)   // 排序也在后台完成
             let free = freeSpace(p)
+            let all = Set(res.map { $0.url })   // 选中项比对用的集合也在后台建好
             DispatchQueue.main.async { perfMark("reload main \(p.lastPathComponent) \(res.count)") {
                 guard tok == self.loadToken else { return }
                 if self.error != err { self.error = err }
@@ -414,9 +421,11 @@ final class TabModel: ObservableObject, Identifiable {
                     self.watch(); return
                 }
                 self.items = newItems
-                let all = Set(res.map { $0.url }), dirPath = p.path
-                let keep = Set(self.selection.filter { all.contains($0) || $0.deletingLastPathComponent().path != dirPath })
-                if keep != self.selection { self.selection = keep }
+                let dirPath = p.path
+                if !self.selection.isEmpty && !self.selection.isSubset(of: all) {
+                    let keep = self.selection.filter { all.contains($0) || $0.deletingLastPathComponent().path != dirPath }
+                    if keep.count != self.selection.count { self.selection = keep }
+                }
                 if self.loading { self.loading = false }
                 self.recompute()
                 self.app?.noteTags(res)
@@ -502,6 +511,16 @@ final class TabModel: ObservableObject, Identifiable {
 }
 
 final class OpStatus: ObservableObject { @Published var text: String? }
+final class TabChrome: ObservableObject {
+    @Published var viewMode: ViewMode = .list
+    @Published var groupKey: GroupKey = .none
+    @Published var sortKey: SortKey = .name
+    @Published var asc = true
+    @Published var searchText = ""
+    @Published var tagFilter: String?
+    @Published var hasSelection = false
+    func set<T: Equatable>(_ k: ReferenceWritableKeyPath<TabChrome, T>, _ v: T) { if self[keyPath: k] != v { self[keyPath: k] = v } }
+}
 
 final class PaneModel: ObservableObject {
     @Published var tabs: [TabModel] = []
@@ -789,14 +808,19 @@ final class AppState: ObservableObject {
     }
     /// 立即从界面上去掉已经移走的项目（不等目录重新读取），让操作的反馈是即时的
     func removeFromLists(_ urls: [URL]) {
-        let gone = Set(urls.map { $0.standardizedFileURL })
+        // 来源 URL 本来就取自列表（已规范化），直接用；匹配不到时再规范化一遍
+        var gone = Set(urls)
         guard !gone.isEmpty else { return }
-        for p in panes { for t in p.tabs where t.items.contains(where: { gone.contains($0.url) }) {
+        let tabs = panes.flatMap { $0.tabs }
+        if !tabs.contains(where: { t in t.items.contains(where: { gone.contains($0.url) }) }) { gone = Set(urls.map { $0.standardizedFileURL }) }
+        for t in tabs {
+            let before = t.items.count
             t.items.removeAll { gone.contains($0.url) }
+            if t.items.count == before { continue }
             let keep = t.selection.subtracting(gone)
             if keep.count != t.selection.count { t.selection = keep }
             t.recompute()
-        } }
+        }
     }
     func transfer(_ urls: [URL], to dir: URL, mode: TransferMode) {
         guard !urls.isEmpty else { return }
@@ -805,7 +829,7 @@ final class AppState: ObservableObject {
         opQueue.async {
             let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv) ?? (.stop, false) })
             DispatchQueue.main.async { perfMark("transfer done") {
-                self.endOp(p)
+                self.endOp(p); resetDisplayNames()
                 var ops: [UndoOp] = []
                 if !r.replaced.isEmpty { ops.append(.trashed(r.replaced)) }
                 if !r.moved.isEmpty { ops.append(.moved(r.moved)) }
@@ -872,6 +896,7 @@ final class AppState: ObservableObject {
         else { inlineRename = u.realFileURL }
     }
     func rename(_ u: URL, to name: String) {
+        resetDisplayNames()
         guard name.trimmingCharacters(in: .whitespacesAndNewlines) != u.lastPathComponent else { return }
         do {
             let dst = try FileOps.rename(u, to: name); undoStack.append(.rename(u, dst))
@@ -911,6 +936,7 @@ final class AppState: ObservableObject {
         if !errs.isEmpty { showError("无法修改标签", errs.joined(separator: "\n")) }
     }
     func undo() {
+        resetDisplayNames()
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
         let p = beginOp("撤销", count: 1)
         opQueue.async {

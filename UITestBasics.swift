@@ -354,7 +354,7 @@ extension UITestRunner {
         perf["copy"] = Double(ms); perf["copyMaxBlock"] = pr.max
         if ProcessInfo.processInfo.environment["FB_SELLOOP"] != nil {
             print("SELLOOP START")
-            for _ in 0..<40 { app.panes[1].tab.reload(); await settle(0.25) }
+            for _ in 0..<30 { let t = app.panes[1].tab; t.items = []; t.recompute(); await settle(0.1); t.selection = Set(names(T).map { T.appendingPathComponent($0).standardizedFileURL }); t.reload(); await settle(0.25) }
             print("SELLOOP END")
         }
         // ⌘A 全选 2003 项

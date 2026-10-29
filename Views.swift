@@ -44,14 +44,14 @@ struct ContentView: View {
             Button { app.activeTab.goForward() } label: { Label("前进", systemImage: "chevron.right") }.help("前进 ⌘]")
             Button { app.activeTab.goUp() } label: { Label("上级", systemImage: "arrow.up") }.help("上级文件夹 ⌘↑")
         }
-        ToolbarItem(placement: .primaryAction) { ViewModePicker(tab: app.activeTab) }
-        ToolbarItem(placement: .primaryAction) { GroupMenu(tab: app.activeTab) }
+        ToolbarItem(placement: .primaryAction) { ViewModePicker(tab: app.activeTab, chrome: app.activeTab.chrome) }
+        ToolbarItem(placement: .primaryAction) { GroupMenu(tab: app.activeTab, chrome: app.activeTab.chrome) }
         ToolbarItem(placement: .primaryAction) {
             Button { app.dual.toggle() } label: { Label("双栏", systemImage: app.dual ? "rectangle.split.2x1.fill" : "rectangle") }.help("单栏/双栏 ⌥⌘U")
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Button { app.newFolder() } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }.help("新建文件夹 ⇧⌘N")
-            ShareButton(tab: app.activeTab)
+            ShareButton(tab: app.activeTab, chrome: app.activeTab.chrome)
             TagButton(tab: app.activeTab)
             MoreMenu(tab: app.activeTab, pane: app.active)
         }
@@ -59,36 +59,39 @@ struct ContentView: View {
             Button { app.sizeReq = SizeReq(url: app.activeTab.path) } label: { Label("空间分析", systemImage: "chart.pie") }.help("分析当前文件夹占用空间 ⌥⌘S")
             Button { app.showPreview.toggle() } label: { Label("预览", systemImage: "sidebar.right") }.help("预览面板 ⇧⌘P")
         }
-        ToolbarItem(placement: .primaryAction) { SearchBox(tab: app.activeTab).id(app.activeTab.id) }
+        ToolbarItem(placement: .primaryAction) { SearchBox(tab: app.activeTab, chrome: app.activeTab.chrome).id(app.activeTab.id) }
     }
 }
 
 struct ViewModePicker: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject var tab: TabModel
-    var body: some View {
-        Picker("显示方式", selection: Binding(get: { tab.viewMode }, set: { app.setViewMode($0) })) {
+    let tab: TabModel
+    @ObservedObject var chrome: TabChrome
+    var body: some View { let _ = perfDebug ? print("TBBODY ViewModePicker") : ();
+        Picker("显示方式", selection: Binding(get: { chrome.viewMode }, set: { app.setViewMode($0) })) {
             ForEach(ViewMode.allCases, id: \.self) { m in Label(m.title, systemImage: m.symbol).labelStyle(.iconOnly).tag(m) }
         }.pickerStyle(.segmented).help("图标 ⌘1 · 列表 ⌘2 · 分栏 ⌘3 · 画廊 ⌘4")
     }
 }
 struct GroupMenu: View {
-    @ObservedObject var tab: TabModel
-    var body: some View {
+    let tab: TabModel
+    @ObservedObject var chrome: TabChrome
+    var body: some View { let _ = perfDebug ? print("TBBODY GroupMenu") : ();
         Menu {
-            Toggle("使用分组", isOn: Binding(get: { tab.groupKey != .none }, set: { tab.groupKey = $0 ? .kind : .none }))
-            Picker("分组方式", selection: $tab.groupKey) { ForEach(GroupKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
+            Toggle("使用分组", isOn: Binding(get: { chrome.groupKey != .none }, set: { tab.groupKey = $0 ? .kind : .none }))
+            Picker("分组方式", selection: Binding(get: { chrome.groupKey }, set: { tab.groupKey = $0 })) { ForEach(GroupKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
             Divider()
-            Picker("排序方式", selection: Binding(get: { tab.sortKey }, set: { tab.setSort($0, asc: tab.asc) })) { ForEach(SortKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
-            Picker("顺序", selection: Binding(get: { tab.asc }, set: { tab.setSort(tab.sortKey, asc: $0) })) { Text("升序").tag(true); Text("降序").tag(false) }.pickerStyle(.inline)
+            Picker("排序方式", selection: Binding(get: { chrome.sortKey }, set: { tab.setSort($0, asc: tab.asc) })) { ForEach(SortKey.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
+            Picker("顺序", selection: Binding(get: { chrome.asc }, set: { tab.setSort(tab.sortKey, asc: $0) })) { Text("升序").tag(true); Text("降序").tag(false) }.pickerStyle(.inline)
         } label: { Label("分组", systemImage: "square.grid.3x1.below.line.grid.1x2") }
         .help("分组与排序方式")
     }
 }
 struct ShareButton: View {
-    @ObservedObject var tab: TabModel
+    let tab: TabModel
+    @ObservedObject var chrome: TabChrome
     // 共享面板在点按时才创建（选中几千个项目时不在每次刷新界面时构建 ShareLink）
-    var body: some View {
+    var body: some View { let _ = perfDebug ? print("TBBODY ShareButton") : ();
         Button {
             let urls = tab.selectedURLs
             guard !urls.isEmpty, let w = NSApp.keyWindow, let v = w.contentView else { NSSound.beep(); return }
@@ -96,14 +99,14 @@ struct ShareButton: View {
             let loc = v.convert(w.mouseLocationOutsideOfEventStream, from: nil)
             p.show(relativeTo: NSRect(x: loc.x, y: loc.y, width: 1, height: 1), of: v, preferredEdge: .minY)
         } label: { Label("共享", systemImage: "square.and.arrow.up") }
-        .disabled(tab.selection.isEmpty).help("共享所选项目（隔空投送、邮件、信息等）")
+        .disabled(!chrome.hasSelection).help("共享所选项目（隔空投送、邮件、信息等）")
     }
 }
 struct TagButton: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject var tab: TabModel
+    let tab: TabModel
     @State var show = false
-    var body: some View {
+    var body: some View { let _ = perfDebug ? print("TBBODY TagButton") : ();
         Button { show.toggle() } label: { Label("标签", systemImage: "tag") }.help("设置标签")
             .popover(isPresented: $show, arrowEdge: .bottom) { TagPopover(tab: tab) }
             .onChange(of: app.tagPopoverTick) { _ in show = true }
@@ -111,10 +114,10 @@ struct TagButton: View {
 }
 struct MoreMenu: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject var tab: TabModel
+    let tab: TabModel
     let pane: Int
     // 菜单在点按时才构建（不在每次选中变化时查询「打开方式」等，避免卡顿）
-    var body: some View {
+    var body: some View { let _ = perfDebug ? print("TBBODY MoreMenu") : ();
         Button { popUp() } label: { Label("更多", systemImage: "ellipsis.circle") }.help("更多操作")
     }
     func popUp() {
@@ -133,15 +136,16 @@ struct MoreMenu: View {
 }
 struct SearchBox: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject var tab: TabModel
+    let tab: TabModel
+    @ObservedObject var chrome: TabChrome
     @State var text = ""
     @FocusState var focused: Bool
-    var body: some View {
+    var body: some View { let _ = perfDebug ? print("TBBODY SearchBox") : ();
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
                 .onExitCommand { text = ""; tab.clearSearch(); app.focusActiveTable() }
-            if !text.isEmpty || tab.tagFilter != nil {
+            if !text.isEmpty || chrome.tagFilter != nil {
                 Button { text = ""; tab.clearSearch(); app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
             }
         }
@@ -150,7 +154,7 @@ struct SearchBox: View {
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(0.15), lineWidth: focused ? 1.5 : 1))
         .onAppear { text = tab.searchText }
         .onChange(of: text) { tab.setSearch($0) }
-        .onChange(of: tab.searchText) { if $0 != text { text = $0 } }
+        .onChange(of: chrome.searchText) { if $0 != text { text = $0 } }
         .onChange(of: app.searchFocus) { _ in
             focused = true
             // 工具栏里的 SwiftUI 焦点有时不生效：直接把搜索框设为第一响应者
@@ -220,7 +224,7 @@ struct SidebarView: View {
         return Button { app.go(u) } label: {
             HStack(spacing: 8) {
                 Image(nsImage: safeFolderIcon(u)).resizable().frame(width: 16, height: 16)
-                Text(name ?? FileManager.default.displayName(atPath: u.path)).lineLimit(1).truncationMode(.middle)
+                Text(name ?? cachedDisplayName(u.path)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
             }.contentShape(Rectangle())
         }
@@ -367,7 +371,7 @@ func pathURLs(_ target: URL) -> [URL] {
     }
     return out
 }
-func pathLabel(_ u: URL) -> String { u.path == "/" ? rootVolumeName : FileManager.default.displayName(atPath: u.path) }
+func pathLabel(_ u: URL) -> String { u.path == "/" ? rootVolumeName : cachedDisplayName(u.path) }
 func truncMiddle(_ s: String, to w: CGFloat) -> String {
     if pbTextWidth(s) <= w { return s }
     let ch = Array(s)
