@@ -321,9 +321,10 @@ extension UITestRunner {
         check("文件操作（图标）：⇧⌘N 新建并就地命名", editing && exists(L.appendingPathComponent("图标新建")), "\(ms)ms", t0: t0)
         await go(0, L, .list); app.focusPane(0)
         // 废纸篓 + 撤销
+        await waitUntil(3) { (self.win.firstResponder as? NSTableView) != nil }
         t0 = Date(); tl.selection = [L.appendingPathComponent("改名后")]; press("\u{8}", 51, .command)
         ms = await waitUntil { !exists(L.appendingPathComponent("改名后")) && !shown(0).contains("改名后") && idle() }
-        check("文件操作：⌘⌫ 移到废纸篓并立即消失", !exists(L.appendingPathComponent("改名后")) && !shown(0).contains("改名后"), "\(ms)ms", t0: t0)
+        check("文件操作：⌘⌫ 移到废纸篓并立即消失", !exists(L.appendingPathComponent("改名后")) && !shown(0).contains("改名后"), "\(ms)ms" + (ms >= 9000 ? " 焦点=\(String(describing: win.firstResponder.map { Swift.type(of: $0) }))" : ""), t0: t0)
         t0 = Date(); press("z", 6, .command)
         ms = await waitUntil { exists(L.appendingPathComponent("改名后")) && shown(0).contains("改名后") && idle() }
         check("文件操作：⌘Z 撤销 → 回到原位并显示", shown(0).contains("改名后"), "\(ms)ms", t0: t0)

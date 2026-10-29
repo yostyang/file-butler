@@ -652,7 +652,17 @@ final class AppState: ObservableObject {
     func focusActiveTable() { focusPane(active) }
     func focusPane(_ i: Int) {
         if active != i { active = i }
-        DispatchQueue.main.async { if let v = self.responders[i].v, v.window?.firstResponder !== v { v.window?.makeFirstResponder(v) } }
+        focusAttempt(i, 0)
+    }
+    /// 切换显示方式时新视图要下一轮才进窗口：没成功就稍后再试几次，避免焦点停在窗口上、快捷键无效
+    private func focusAttempt(_ i: Int, _ n: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (n == 0 ? 0 : 0.05)) {
+            guard self.active == i else { return }
+            if let v = self.responders[i].v, let w = v.window {
+                if w.firstResponder === v || w.makeFirstResponder(v) { return }
+            }
+            if n < 10 { self.focusAttempt(i, n + 1) }
+        }
     }
     func setViewMode(_ m: ViewMode) { activeTab.viewMode = m; if m == .list || m == .column { ThumbCache.purgeImages() }; objectWillChange.send(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.focusActiveTable() } }
     func reloadAll() { panes.forEach { $0.tabs.forEach { $0.reload() } } }
