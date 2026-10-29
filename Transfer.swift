@@ -201,17 +201,19 @@ let perfDebug = ProcessInfo.processInfo.environment["FB_PERF"] != nil
     let t0 = CFAbsoluteTimeGetCurrent(); let r = f()
     let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
     if ms > 8 { print(String(format: "PERF %6.1fms  %@", ms, label())) }
+    if ms > 1 { StallWatch.marks.append(String(format: "%@=%.0f", label(), ms)) }
     return r
 }
 
 /// 调试：主线程一次 run loop 超过 30ms 时打印
 enum StallWatch {
     static var t0 = CFAbsoluteTimeGetCurrent()
+    static var marks: [String] = []
     static func install() {
         guard perfDebug else { return }
         let obs = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, act in
             let now = CFAbsoluteTimeGetCurrent()
-            if act == .afterWaiting { t0 = now } else { let ms = (now - t0) * 1000; if ms > 30 { print(String(format: "STALL %6.1fms", ms)) } }
+            if act == .afterWaiting { t0 = now; marks = [] } else { let ms = (now - t0) * 1000; if ms > 30 { print(String(format: "STALL %6.1fms ", ms) + marks.joined(separator: " ")) }; marks = [] }
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), obs, .commonModes)
     }

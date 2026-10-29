@@ -172,7 +172,8 @@ struct SearchBox: View {
 // MARK: Sidebar
 struct SidebarView: View {
     @EnvironmentObject var app: AppState
-    var body: some View {
+    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body SidebarView: \(ms)") } }; return body0 }
+    @ViewBuilder var body0: some View {
         List {
             Section("个人收藏") { ForEach(app.favorites, id: \.self) { row($0, name: $0.path.hasSuffix("CloudDocs") ? "iCloud 云盘" : nil) } }
             Section {
@@ -290,7 +291,8 @@ struct TabContent: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let index: Int
-    var body: some View {
+    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body TabContent: \(ms)") } }; return body0 }
+    @ViewBuilder var body0: some View {
         VStack(spacing: 0) {
             if app.showPathBar || app.editingPane == index { PathBar(tab: tab, index: index) }
             if tab.searchActive { SearchScopeBar(tab: tab) }
@@ -465,7 +467,8 @@ struct PathSegmentsView: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let index: Int, width: CGFloat
-    var body: some View {
+    var body: some View { let t0 = CFAbsoluteTimeGetCurrent(); defer { let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000; if perfDebug && ms > 1 { StallWatch.marks.append("body\(Int(ms))") }; if perfDebug && ms > 5 { print("PERF body PathSegmentsView: \(ms)") } }; return body0 }
+    @ViewBuilder var body0: some View {
         let target = tab.pathTarget
         let segs = pathBarLayout(pathURLs(target), width: width)
         HStack(spacing: 0) {

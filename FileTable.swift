@@ -282,7 +282,8 @@ struct FileTable: NSViewRepresentable {
             guard !suppress, let d = tv.sortDescriptors.first, let k = SortKey(rawValue: d.key ?? "") else { return }
             tab.setSort(k, asc: d.ascending)
         }
-        func tableViewSelectionDidChange(_ n: Notification) {
+        func tableViewSelectionDidChange(_ n: Notification) { perfMark("table selDidChange") { selDidChange() } }
+        func selDidChange() {
             guard !suppress else { return }
             tab.selection = Set(selectedURLs)
             if let r = table?.selectedRow, let it = item(r) { tab.anchor = it.url }

@@ -345,18 +345,28 @@ extension UITestRunner {
         perf["listLoad"] = 0
         // 拷贝
         await moveMouse(to: center(0)); press("a", 0, .command); press("c", 8, .command)
-        await moveMouse(to: center(1))
+        await moveMouse(to: center(1)); await settle(0.5)
         var probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("v", 9, .command)
-        ms = await waitUntil(60) { self.names(T).count == N + 3 && self.shown(1).count == N + 3 && self.idle() }
+        ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 }
         var pr = probe.stop()
         check("性能：拷贝粘贴 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && shown(1).count == N + 3, String(format: "耗时 %dms，主线程最长阻塞 %.1fms，p99 %.1fms", ms, pr.max, pr.p99), t0: t0)
         perf["copy"] = Double(ms); perf["copyMaxBlock"] = pr.max
+        if ProcessInfo.processInfo.environment["FB_SELLOOP"] != nil {
+            print("SELLOOP START")
+            for _ in 0..<25 { press("a", 0, .command); await settle(0.25); app.panes[1].tab.selection = []; await settle(0.25) }
+            print("SELLOOP END")
+        }
+        // ⌘A 全选 2003 项
+        probe = MainThreadProbe(); probe.start(); t0 = Date()
+        press("a", 0, .command); await settle(0.5)
+        pr = probe.stop()
+        check("性能：⌘A 全选 \(N + 3) 项，主线程最长阻塞 < 50ms", pr.max < 50 && app.panes[1].tab.selection.count == N + 3, String(format: "主线程最长阻塞 %.1fms", pr.max), t0: t0)
+        perf["selectAllMaxBlock"] = pr.max
         // 移到废纸篓
-        press("a", 0, .command)
         probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("\u{8}", 51, .command)
-        ms = await waitUntil(120) { self.shown(1).isEmpty && self.idle() }
+        ms = await waitUntil(120) { self.idle() && self.app.panes[1].tab.display.isEmpty }
         pr = probe.stop()
         check("性能：\(N + 3) 个文件移到废纸篓，主线程最长阻塞 < 50ms", pr.max < 50 && names(T).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max), t0: t0)
         perf["trash"] = Double(ms); perf["trashMaxBlock"] = pr.max
@@ -364,10 +374,10 @@ extension UITestRunner {
         app.undoStack.removeAll()
         // 移动（剪切粘贴）
         await moveMouse(to: center(0)); press("a", 0, .command); press("x", 7, .command)
-        await moveMouse(to: center(1))
+        await moveMouse(to: center(1)); await settle(0.5)
         probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("v", 9, .command)
-        ms = await waitUntil(60) { self.names(T).count == N + 3 && self.shown(1).count == N + 3 && self.shown(0).isEmpty && self.idle() }
+        ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 && self.app.panes[0].tab.display.isEmpty }
         pr = probe.stop()
         check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max), t0: t0)
         perf["move"] = Double(ms); perf["moveMaxBlock"] = pr.max
