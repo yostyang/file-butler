@@ -16,7 +16,7 @@ grep -q 'certificate leaf = H"f84b9654f42df2c8bfdd75f7eaf123a7525d060c"' build-t
 echo "== 2/4 文件操作自测 =="; "$APP" --selftest | tee build-test/selftest.log | grep -E "FAIL|结果"; grep -q "0 失败" build-test/selftest.log
 echo "== 3/4 界面测试 =="
 "$APP" --uitest "$PWD/$OUT" > build-test/uitest.log 2>&1 & P=$!
-for i in $(seq 1 240); do kill -0 $P 2>/dev/null || break; sleep 1; done
+for i in $(seq 1 600); do kill -0 $P 2>/dev/null || break; sleep 1; done
 if kill -0 $P 2>/dev/null; then kill $P; echo "界面测试超时"; exit 1; fi
 wait $P || { grep -E "FAIL" build-test/uitest.log; tail -1 build-test/uitest.log; echo "界面测试失败"; exit 1; }
 grep -E "FAIL|界面测试" build-test/uitest.log
@@ -24,7 +24,7 @@ echo "== 4/4 截图对比 =="
 GOLD=Tests/golden
 if [ "${1:-}" = "--approve" ]; then
   mkdir -p $GOLD; rm -f $GOLD/*.png
-  cp $OUT/pb-*.png $OUT/pane-list.png $OUT/pane-column.png $OUT/video-preview.png $OUT/list-view.png $GOLD/
+  cp $OUT/pb-*.png $OUT/pane-list.png $OUT/pane-column.png $OUT/video-preview.png $OUT/list-view.png $OUT/dark-pane-list.png $OUT/dark-pane-icon.png $OUT/light-pane-icon.png $GOLD/
   echo "已把本次截图设为基准图：$(ls $GOLD | wc -l | tr -d ' ') 张"
 else
   "$APP" --compare "$PWD/$GOLD" "$PWD/$OUT" | tee build-test/compare.log | grep -E "FAIL|对比结果"

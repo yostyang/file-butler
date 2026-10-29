@@ -19,6 +19,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     let pane: Int
     var qlURLs: [URL] = []
     var iconColumns = 4
+    var qlOpen = false
     init(app: AppState, pane: Int) { self.app = app; self.pane = pane }
     var tab: TabModel { app.panes[pane].tab }
 
@@ -48,7 +49,8 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     }
 
     // MARK: keys
-    func handleKeyDown(_ e: NSEvent, isTable: Bool) -> Bool {
+    func handleKeyDown(_ e: NSEvent, isTable: Bool) -> Bool { perfMark("keydown \(e.keyCode)") { handleKeyDown0(e, isTable: isTable) } }
+    func handleKeyDown0(_ e: NSEvent, isTable: Bool) -> Bool {
         let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
         switch e.keyCode {
         case 49: quickLook(); return true
@@ -71,8 +73,11 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         default: return false
         }
     }
-    func handleKeyEquivalent(_ e: NSEvent) -> Bool {
+    func handleKeyEquivalent(_ e: NSEvent) -> Bool { perfMark("key \(e.charactersIgnoringModifiers ?? "")") { handleKeyEquivalent0(e) } }
+    func handleKeyEquivalent0(_ e: NSEvent) -> Bool {
         let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
+        // 访达：⌘C 之后按 ⌥⌘V = 移动到这里
+        if f == [.command, .option], e.charactersIgnoringModifiers?.lowercased() == "v" { app.paste(into: pasteDir, forceMove: true); return true }
         guard f == .command else { return false }
         switch e.keyCode {
         case 51: app.trash(tab.selectedURLs); return true
@@ -82,7 +87,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         switch e.charactersIgnoringModifiers?.lowercased() ?? "" {
         case "c": app.copyToClipboard(tab.selectedURLs, cut: false); return true
         case "x": app.copyToClipboard(tab.selectedURLs, cut: true); return true
-        case "v": app.paste(into: tab.path); return true
+        case "v": app.paste(into: pasteDir); return true
         case "z": app.undo(); return true
         case "d": app.duplicate(tab.selectedURLs); return true
         case "a": tab.selection = Set(tab.display.map { $0.url }); return true
@@ -90,13 +95,18 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         }
     }
 
+    /// 粘贴目标：当前文件夹（分栏视图里是最右侧打开的文件夹）
+    var pasteDir: URL { tab.viewMode == .column && !tab.isGlobalSearch ? (tab.columnChain.last ?? tab.path) : tab.path }
+
     // MARK: Quick Look
     func quickLook(_ urls: [URL]? = nil) {
+        if TestEnv.active { if urls == nil && !qlURLs.isEmpty && qlOpen { qlOpen = false; return }; qlURLs = urls ?? tab.selectedURLs; qlOpen = !qlURLs.isEmpty; return }
         guard let p = QLPreviewPanel.shared() else { return }
         if urls == nil && QLPreviewPanel.sharedPreviewPanelExists() && p.isVisible { p.orderOut(nil); return }
         qlURLs = urls ?? tab.selectedURLs
         guard !qlURLs.isEmpty else { NSSound.beep(); return }
         if let v = app.responders[pane].v { v.window?.makeFirstResponder(v) }
+        if TestEnv.active { return }   // 测试时不在屏幕上弹出快速查看窗口
         p.dataSource = self; p.delegate = self
         p.makeKeyAndOrderFront(nil); p.reloadData()
     }

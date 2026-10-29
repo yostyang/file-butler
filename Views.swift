@@ -22,7 +22,7 @@ struct ContentView: View {
         .navigationTitle(app.activeTab.title)
         .sheet(isPresented: $app.showFDA) { FDASheet() }
         .sheet(isPresented: $app.showViewOptions) { ViewOptionsSheet().environmentObject(app) }
-        .onAppear { RightClick.install() }
+        .onAppear { RightClick.install(app) }
         .sheet(item: $app.renameReq, onDismiss: { app.focusActiveTable() }) { r in RenameSheet(url: r.url).environmentObject(app) }
         .sheet(item: $app.sizeReq, onDismiss: { app.focusActiveTable() }) { r in SizeAnalysisView(rootURL: r.url).environmentObject(app) }
         .alert(app.alert?.title ?? "", isPresented: Binding(get: { app.alert != nil }, set: { if !$0 { app.alert = nil } })) {
@@ -87,9 +87,16 @@ struct GroupMenu: View {
 }
 struct ShareButton: View {
     @ObservedObject var tab: TabModel
+    // 共享面板在点按时才创建（选中几千个项目时不在每次刷新界面时构建 ShareLink）
     var body: some View {
-        let urls = tab.selectedURLs
-        ShareLink(items: urls) { Label("共享", systemImage: "square.and.arrow.up") }.disabled(urls.isEmpty).help("共享所选项目（隔空投送、邮件、信息等）")
+        Button {
+            let urls = tab.selectedURLs
+            guard !urls.isEmpty, let w = NSApp.keyWindow, let v = w.contentView else { NSSound.beep(); return }
+            let p = NSSharingServicePicker(items: urls)
+            let loc = v.convert(w.mouseLocationOutsideOfEventStream, from: nil)
+            p.show(relativeTo: NSRect(x: loc.x, y: loc.y, width: 1, height: 1), of: v, preferredEdge: .minY)
+        } label: { Label("共享", systemImage: "square.and.arrow.up") }
+        .disabled(tab.selection.isEmpty).help("共享所选项目（隔空投送、邮件、信息等）")
     }
 }
 struct TagButton: View {
@@ -106,16 +113,22 @@ struct MoreMenu: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     let pane: Int
+    // 菜单在点按时才构建（不在每次选中变化时查询「打开方式」等，避免卡顿）
     var body: some View {
-        Menu {
-            Button("新建文件夹") { app.active = pane; app.newFolder() }
-            if !tab.selectedURLs.isEmpty { Divider(); SpecMenu(entries: contextSpec(app: app, tab: tab, pane: pane, urls: tab.selectedURLs), app: app) }
-            Divider()
-            Button(app.showPreview ? "隐藏预览" : "显示预览") { app.showPreview.toggle() }
-            Button(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件") { app.showHidden.toggle() }
-            Button("空间分析") { app.sizeReq = SizeReq(url: tab.path) }
-            Button("把当前文件夹加入书签") { app.addBookmark(tab.path) }
-        } label: { Label("更多", systemImage: "ellipsis.circle") }.help("更多操作")
+        Button { popUp() } label: { Label("更多", systemImage: "ellipsis.circle") }.help("更多操作")
+    }
+    func popUp() {
+        let t = tab, a = app, p = pane
+        var e: [MEntry] = [.item("新建文件夹", nil, false, true) { a.active = p; a.newFolder() }]
+        let sel = t.selectedURLs
+        if !sel.isEmpty { e.append(.sep); e += contextSpec(app: a, tab: t, pane: p, urls: sel) }
+        e += [.sep,
+              .item(a.showPreview ? "隐藏预览" : "显示预览", nil, false, true) { a.showPreview.toggle() },
+              .item(a.showHidden ? "不显示隐藏文件" : "显示隐藏文件", nil, false, true) { a.showHidden.toggle() },
+              .item("空间分析", nil, false, true) { a.sizeReq = SizeReq(url: t.path) },
+              .item("把当前文件夹加入书签", nil, false, true) { a.addBookmark(t.path) }]
+        let m = NSMenu(); fillMenu(m, e, app: a)
+        m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 }
 struct SearchBox: View {
@@ -212,6 +225,7 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain).fontWeight(isCur ? .semibold : .regular)
         .foregroundStyle(isCur ? AnyShapeStyle(accentA) : AnyShapeStyle(.primary)).help(u.path)
+        .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: u) }
     }
 }
 
@@ -284,7 +298,7 @@ struct TabContent: View {
             ZStack {
                 switch effectiveMode {
                 case .list: FileTable(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection, renaming: app.inlineRename)
-                case .icon: IconGrid(tab: tab, index: index)
+                case .icon: IconCollection(tab: tab, app: app, paneIndex: index, version: tab.version, selection: tab.selection, iconSize: app.iconSize, renaming: app.inlineRename)
                 case .column: ColumnBrowser(tab: tab, index: index)
                 case .gallery: GalleryView(tab: tab, index: index)
                 }
@@ -470,7 +484,7 @@ struct PathSegmentsView: View {
                                 .resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
                             Text(s.label).font(.system(size: 12)).lineLimit(1).fixedSize()
                         }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
-                    }.buttonStyle(.plain).help(s.url.path)
+                    }.buttonStyle(.plain).help(s.url.path).onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: s.url) }
                 }
             }
         }
@@ -500,12 +514,11 @@ struct StatusContent: View {
     @ObservedObject var tab: TabModel
     let busy: String?, dual: Bool, active: Int
     var body: some View {
-        let sel = tab.selectedItems
-        let selSize = sel.filter { !$0.isFolderLike }.reduce(Int64(0)) { $0 + $1.size }
+        let sum = perfMark("status summary") { tab.selectionSummary }
         HStack(spacing: 10) {
             if dual { Text(active == 0 ? "左栏" : "右栏").fontWeight(.semibold).foregroundStyle(accentA) }
             Text("\(tab.display.count) 个项目")
-            if !sel.isEmpty { Text("已选 \(sel.count) 项，\(fmtBytes(selSize))" + (sel.contains { $0.isFolderLike } ? "（不含文件夹）" : "")) }
+            if sum.count > 0 { Text("已选 \(sum.count) 项，\(fmtBytes(sum.size))" + (sum.hasFolder ? "（不含文件夹）" : "")) }
             if let b = busy { ProgressView().controlSize(.small); Text(b) }
             Spacer()
             if tab.viewMode == .icon && !tab.isGlobalSearch {

@@ -137,6 +137,7 @@ final class UITestRunner {
     var win: NSWindow!
     var results: [(name: String, ok: Bool, detail: String, ms: Int)] = []
     var savedPB: [NSPasteboardItem] = []
+    var perf: [String: Double] = [:]
     static var started = false
     init(app: AppState) { self.app = app }
 
@@ -220,6 +221,10 @@ final class UITestRunner {
                 let r = k.convert(k.bounds, to: nil)
                 if r.width * r.height > best.width * best.height { best = r }
             }
+            if let c = v as? FBCollectionView, c.window === win, c.coord?.pane == i, !c.isHiddenOrHasHiddenAncestor, let sv = c.enclosingScrollView {
+                let r = sv.convert(sv.bounds, to: nil)
+                if r.width * r.height > best.width * best.height { best = r }
+            }
             if let t = v as? NSTableView, i == 0 || true, let sv = t.enclosingScrollView, t.window === win, let d = t.delegate as? FileTable.Coordinator, d.pane == i {
                 let r = sv.convert(sv.bounds, to: nil)
                 if r.width * r.height > best.width * best.height { best = r }
@@ -260,6 +265,7 @@ final class UITestRunner {
             let r = paneRect(0); let p = NSPoint(x: r.maxX - 40, y: r.minY + 20)
             print("DEBUG hit", String(describing: win.contentView?.superview?.hitTest(win.contentView!.superview!.convert(p, from: nil)).map { Swift.type(of: $0) }))
         }
+        if ProcessInfo.processInfo.environment["FB_PERFONLY"] != nil { await regressionTests(); writeChecklist(); finish(); return }
         await snapshots()
         if TestEnv.mode == "--uitest" { await uiTests() }
         finish()
@@ -513,6 +519,9 @@ final class UITestRunner {
         let p1 = pathText(1)
         check("右栏路径栏反映右栏（文件夹A）", p1.hasSuffix("文件夹A"), p1)
         shot("ui-final")
+        await regressionTests()
+        await darkSnapshots()
+        writeChecklist()
     }
 
     func finish() {

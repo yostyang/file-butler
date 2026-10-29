@@ -164,30 +164,12 @@ indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL
 // MARK: - Pure file operations (also used by --selftest)
 enum FileOps {
     static let fm = FileManager.default
-    static func transfer(_ urls: [URL], to rawDir: URL, mode: TransferMode) -> (moved: [(URL, URL)], copied: [URL], errs: [String]) {
-        let dir = rawDir.standardizedFileURL
-        var moved: [(URL, URL)] = [], copied: [URL] = [], errs: [String] = []
-        for raw in urls {
-            let src = raw.standardizedFileURL, name = src.lastPathComponent
-            let move = mode == .move || (mode == .auto && sameVolume(src, dir))
-            if dir.path == src.path || dir.path.hasPrefix(src.path + "/") { errs.append("不能把「\(name)」放进它自身或它的子文件夹。"); continue }
-            if move && src.deletingLastPathComponent().path == dir.path { continue }
-            do {
-                if move {
-                    let dst = dir.appendingPathComponent(name)
-                    if fm.fileExists(atPath: dst.path) { errs.append("「\(name)」在目标文件夹中已存在，未移动。"); continue }
-                    try fm.moveItem(at: src, to: dst); moved.append((src, dst))
-                } else {
-                    let dst = uniqueCopyURL(in: dir, name: name)
-                    try fm.copyItem(at: src, to: dst); copied.append(dst)
-                }
-            } catch { errs.append("「\(name)」：\(error.localizedDescription)") }
-        }
-        return (moved, copied, errs)
-    }
-    static func trash(_ urls: [URL]) -> (done: [(URL, URL)], errs: [String], perm: Bool) {
+    static func trash(_ urls: [URL], progress: OpProgress? = nil) -> (done: [(URL, URL)], errs: [String], perm: Bool) {
         var done: [(URL, URL)] = [], errs: [String] = [], perm = false
+        progress?.total = urls.count
         for u in urls {
+            if progress?.isCancelled == true { break }
+            defer { progress?.step() }
             do {
                 var out: NSURL?
                 try fm.trashItem(at: u, resultingItemURL: &out)
@@ -353,6 +335,14 @@ final class TabModel: ObservableObject, Identifiable {
         for u in selection { if let i = indexCache[u] { inDisplay.append((i, display[i])) } else { rest.append(u) } }
         return inDisplay.sorted { $0.0 < $1.0 }.map { $0.1 } + rest.sorted { $0.path < $1.path }.filter { FileManager.default.fileExists(atPath: $0.path) }.map(makeItem)
     }
+    /// 状态栏用的选中摘要：只查已加载的列表，不逐个读取磁盘（大量选中时也不卡）
+    var selectionSummary: (count: Int, size: Int64, hasFolder: Bool) {
+        guard !selection.isEmpty else { return (0, 0, false) }
+        fillCaches()
+        var size: Int64 = 0, folder = false
+        for u in selection { if let i = indexCache[u] { let it = display[i]; if it.isFolderLike { folder = true } else { size += it.size } } }
+        return (selection.count, size, folder)
+    }
     var selectedURLs: [URL] {
         guard !selection.isEmpty else { return [] }
         fillCaches()
@@ -411,7 +401,7 @@ final class TabModel: ObservableObject, Identifiable {
             let (res, err, denied) = loadDirectory(p, hidden: hidden)
             let sorted = sortItems(res, key: key, asc: ascending)   // 排序也在后台完成
             let free = freeSpace(p)
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { perfMark("reload main \(p.lastPathComponent) \(res.count)") {
                 guard tok == self.loadToken else { return }
                 self.error = err; self.permissionDenied = denied; self.freeBytes = free
                 self.items = key == self.sortKey && ascending == self.asc ? sorted : sortItems(res, key: self.sortKey, asc: self.asc)
@@ -422,7 +412,7 @@ final class TabModel: ObservableObject, Identifiable {
                 self.recompute()
                 self.app?.noteTags(res)
                 self.watch()
-            }
+            } }
         }
     }
     private func watch() {
@@ -541,6 +531,7 @@ final class AppState: ObservableObject {
     var controllers: [PaneController] = []
     var undoStack: [UndoOp] = []
     var cutChangeCount = -1
+    var ownClip: (Int, [URL])?
     let favorites: [URL]
     let ud = UserDefaults.standard, fm = FileManager.default
 
@@ -659,11 +650,14 @@ final class AppState: ObservableObject {
         guard !urls.isEmpty else { NSSound.beep(); return }
         let pb = NSPasteboard.general; pb.clearContents(); pb.writeObjects(urls.map { $0 as NSURL })
         cutChangeCount = cut ? pb.changeCount : -1
+        ownClip = (pb.changeCount, urls)
     }
-    func paste(into dir: URL? = nil) {
+    func paste(into dir: URL? = nil, forceMove: Bool = false) {
         let pb = NSPasteboard.general
-        guard let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else { NSSound.beep(); return }
-        let cut = pb.changeCount == cutChangeCount
+        // 自己拷贝的内容直接用内存里的列表（读取剪贴板里几千个 URL 很慢）
+        let urls = ownClip?.0 == pb.changeCount ? ownClip!.1 : perfMark("paste read") { fileURLs(pb) }
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        let cut = pb.changeCount == cutChangeCount || forceMove
         transfer(urls, to: dir ?? activeTab.path, mode: cut ? .move : .copy)
         if cut { cutChangeCount = -1 }
     }
@@ -677,38 +671,134 @@ final class AppState: ObservableObject {
         guard !urls.isEmpty else { NSSound.beep(); return }
         for (dir, group) in Dictionary(grouping: urls, by: { $0.deletingLastPathComponent() }) { transfer(group, to: dir, mode: .copy) }
     }
+    /// SwiftUI 视图（分栏、画廊、侧边栏、路径栏）的拖放入口
     func dropProviders(_ ps: [NSItemProvider], to dir: URL) -> Bool {
-        let copy = NSEvent.modifierFlags.contains(.option)
+        let mods = DragMods.current
         let group = DispatchGroup(), lock = NSLock(); var urls: [URL] = []
         for p in ps where p.canLoadObject(ofClass: URL.self) {
             group.enter()
             _ = p.loadObject(ofClass: URL.self) { u, _ in if let u = u, u.isFileURL { lock.lock(); urls.append(u); lock.unlock() }; group.leave() }
         }
-        group.notify(queue: .main) { if !urls.isEmpty { self.transfer(urls, to: dir, mode: copy ? .copy : .auto) } }
+        group.notify(queue: .main) { if !urls.isEmpty { self.performDrop(urls, to: dir, mods: mods) } }
         return true
+    }
+    /// 所有拖放最终都走这里（列表、图标、分栏、画廊、侧边栏、路径栏、从访达拖进来）
+    @discardableResult func performDrop(_ urls: [URL], to dir: URL, mods: NSEvent.ModifierFlags? = nil) -> Bool {
+        let saved = DragMods.override
+        if let m = mods { DragMods.override = m }
+        let kind = planDrop(urls, to: dir)
+        DragMods.override = saved
+        switch kind {
+        case .none: return false
+        case .move: transfer(urls, to: dir, mode: .move)
+        case .copy: transfer(urls, to: dir, mode: .copy)
+        case .alias:
+            var made: [URL] = [], errs: [String] = []
+            for u in urls { do { made.append(try FileOps.makeAlias(u, in: dir)) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") } }
+            if !made.isEmpty { undoStack.append(.created(made)) }
+            reload(dirs: [dir])
+            if !errs.isEmpty { showError("无法制作替身", errs.joined(separator: "\n")) }
+        }
+        return true
+    }
+
+    // MARK: 后台操作队列：所有耗时的文件操作都在这里串行执行，主线程只更新界面
+    let opQueue = DispatchQueue(label: "filebutler.ops", qos: .userInitiated)
+    var progress: OpProgress?
+    private var progressTimer: Timer?
+    /// 测试用：同名冲突时的固定选择（nil = 弹出访达样式的对话框）
+    static var conflictOverride: (Conflict, Bool)?
+    func beginOp(_ verb: String, count: Int) -> OpProgress {
+        let p = OpProgress(); p.verb = verb; p.total = count; progress = p
+        busyText = "正在\(verb) \(count) 项…"
+        progressTimer?.invalidate()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            guard let self = self, let p = self.progress else { return }
+            let t = "正在\(p.verb) \(min(p.done + 1, p.total))/\(p.total) 项…"
+            if self.busyText != t { self.busyText = t }
+        }
+        return p
+    }
+    func endOp(_ p: OpProgress) {
+        if progress === p { progress = nil; progressTimer?.invalidate(); progressTimer = nil; busyText = nil }
+    }
+    func cancelOp() { progress?.cancel() }
+    /// 访达样式的同名冲突对话框（在后台线程调用，同步等主线程的选择）
+    func askConflict(_ name: String, move: Bool) -> (Conflict, Bool) {
+        if let o = AppState.conflictOverride { return o }
+        if TestEnv.active { return (.keepBoth, false) }   // 测试时绝不弹出对话框
+        var out: (Conflict, Bool) = (.stop, false)
+        DispatchQueue.main.sync {
+            let a = NSAlert()
+            a.messageText = "此位置已存在名称为“\(name)”的项目。"
+            a.informativeText = "要用正在\(move ? "移动" : "拷贝")的项目替换它吗？"
+            a.addButton(withTitle: "替换"); a.addButton(withTitle: "停止"); a.addButton(withTitle: "保留两者")
+            a.showsSuppressionButton = true; a.suppressionButton?.title = "全部应用"
+            let r = a.runModal()
+            let all = a.suppressionButton?.state == .on
+            switch r {
+            case .alertFirstButtonReturn: out = (.replace, all)
+            case .alertThirdButtonReturn: out = (.keepBoth, all)
+            default: out = (.stop, false)
+            }
+        }
+        return out
+    }
+    /// 只刷新显示着这些文件夹的标签页
+    func reload(dirs: [URL]) {
+        let set = Set(dirs.map { $0.standardizedFileURL.realFileURL.path })
+        for p in panes {
+            let t = p.tab
+            let cur = [t.path] + t.columnChain
+            if t.isGlobalSearch || cur.contains(where: { set.contains($0.realFileURL.path) }) { t.reload() }
+        }
+    }
+    /// 立即从界面上去掉已经移走的项目（不等目录重新读取），让操作的反馈是即时的
+    func removeFromLists(_ urls: [URL]) {
+        let gone = Set(urls.map { $0.standardizedFileURL })
+        guard !gone.isEmpty else { return }
+        for p in panes { for t in p.tabs where t.items.contains(where: { gone.contains($0.url) }) {
+            t.items.removeAll { gone.contains($0.url) }
+            let keep = t.selection.subtracting(gone)
+            if keep.count != t.selection.count { t.selection = keep }
+            t.recompute()
+        } }
     }
     func transfer(_ urls: [URL], to dir: URL, mode: TransferMode) {
         guard !urls.isEmpty else { return }
-        busyText = (mode == .move ? "正在移动 " : "正在拷贝 ") + "\(urls.count) 项…"
-        DispatchQueue.global(qos: .userInitiated).async {
-            let r = FileOps.transfer(urls, to: dir, mode: mode)
-            DispatchQueue.main.async {
-                self.busyText = nil
-                if !r.moved.isEmpty { self.undoStack.append(.moved(r.moved)) }
-                if !r.copied.isEmpty { self.undoStack.append(.created(r.copied)) }
+        let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count)
+        let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
+        opQueue.async {
+            let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv) ?? (.stop, false) })
+            DispatchQueue.main.async { perfMark("transfer done") {
+                self.endOp(p)
+                var ops: [UndoOp] = []
+                if !r.replaced.isEmpty { ops.append(.trashed(r.replaced)) }
+                if !r.moved.isEmpty { ops.append(.moved(r.moved)) }
+                if !r.copied.isEmpty { ops.append(.created(r.copied)) }
+                if ops.count == 1 { self.undoStack.append(ops[0]) } else if !ops.isEmpty { self.undoStack.append(.group(ops)) }
+                self.removeFromLists(r.moved.map { $0.0 })
                 let landed = Set((r.moved.map { $0.1 } + r.copied).map { $0.standardizedFileURL })
                 for p in self.panes { for t in p.tabs where t.path.path == dir.standardizedFileURL.path && !landed.isEmpty { t.selection = landed } }
-                self.reloadVisible()
+                self.reload(dirs: [dir] + srcDirs)
                 if !r.errs.isEmpty { self.showError("部分操作未完成", r.errs.joined(separator: "\n")) }
-            }
+            } }
         }
     }
     func trash(_ urls: [URL]) {
         guard !urls.isEmpty else { NSSound.beep(); return }
-        let r = FileOps.trash(urls)
-        if !r.done.isEmpty { undoStack.append(.trashed(r.done)) }
-        reloadVisible()
-        if !r.errs.isEmpty { showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
+        let p = beginOp("移到废纸篓", count: urls.count)
+        let dirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
+        opQueue.async {
+            let r = FileOps.trash(urls, progress: p)
+            DispatchQueue.main.async { perfMark("trash done") {
+                self.endOp(p)
+                if !r.done.isEmpty { self.undoStack.append(.trashed(r.done)) }
+                perfMark("trash remove") { self.removeFromLists(r.done.map { $0.0 }) }
+                perfMark("trash reload") { self.reload(dirs: dirs) }
+                if !r.errs.isEmpty { self.showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
+            } }
+        }
     }
     /// 访达行为：在当前显示的文件夹（分栏视图里是最右侧的文件夹）新建「未命名文件夹」，选中并直接进入就地重命名。
     func newFolder(in target: URL? = nil) {
@@ -788,8 +878,15 @@ final class AppState: ObservableObject {
     }
     func undo() {
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
-        do { try FileOps.undo(op) } catch { showError("无法撤销", error.localizedDescription) }
-        reloadVisible()
+        let p = beginOp("撤销", count: 1)
+        opQueue.async {
+            let err: String? = { do { try FileOps.undo(op); return nil } catch { return error.localizedDescription } }()
+            DispatchQueue.main.async {
+                self.endOp(p)
+                if let e = err { self.showError("无法撤销", e) }
+                self.reloadVisible()
+            }
+        }
     }
 }
 

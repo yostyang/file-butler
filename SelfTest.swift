@@ -57,9 +57,43 @@ enum SelfTest {
         let c1 = b.appendingPathComponent("file1.txt")
         check("拷贝到另一文件夹", r.copied == [c1] && exists(c1) && exists(f1) && text(c1) == "hello", r.errs.joined())
         r = FileOps.transfer([f1], to: b, mode: .copy)
-        check("同名拷贝自动加「副本」", r.copied.first?.lastPathComponent == "file1 副本.txt", r.copied.first?.lastPathComponent ?? "")
+        check("拷贝到别处遇到同名：保留两者 → 「file1 2.txt」（访达）", r.copied.first?.lastPathComponent == "file1 2.txt", r.copied.first?.lastPathComponent ?? "")
         if let more = try? FileOps.undo(.created(r.copied)) { trashLeftovers += more }
-        check("撤销拷贝", !exists(b.appendingPathComponent("file1 副本.txt")))
+        check("撤销拷贝", !exists(b.appendingPathComponent("file1 2.txt")))
+        // 同名冲突：替换 / 停止 / 跳过 / 全部应用
+        try? "old".write(to: c1, atomically: true, encoding: .utf8)
+        r = FileOps.transfer([f1], to: b, mode: .copy, resolve: { _, _ in (.stop, false) })
+        check("同名冲突：停止 → 不改动", r.cancelled && r.copied.isEmpty && text(c1) == "old")
+        r = FileOps.transfer([f1], to: b, mode: .copy, resolve: { _, _ in (.replace, false) })
+        check("同名冲突：替换 → 新内容，旧项目进废纸篓（可撤销）", text(c1) == "hello" && r.replaced.count == 1 && exists(r.replaced[0].1))
+        if let more = try? FileOps.undo(.group([.trashed(r.replaced), .created(r.copied)])) { trashLeftovers += more }
+        check("撤销替换 → 旧内容回来", text(c1) == "old", text(c1))
+        let g1 = a.appendingPathComponent("g1.txt"), g2 = a.appendingPathComponent("g2.txt")
+        try? "1".write(to: g1, atomically: true, encoding: .utf8); try? "2".write(to: g2, atomically: true, encoding: .utf8)
+        _ = FileOps.transfer([g1, g2], to: b, mode: .copy)
+        var asked = 0
+        r = FileOps.transfer([g1, g2], to: b, mode: .copy, resolve: { _, _ in asked += 1; return (.skip, true) })
+        check("同名冲突：跳过 + 全部应用 → 只问一次", asked == 1 && r.copied.isEmpty, "asked=\(asked)")
+        try? fm.removeItem(at: g1); try? fm.removeItem(at: g2)
+        // 拖放规则（访达）
+        let other = root.appendingPathComponent("drop"); try? fm.createDirectory(at: other, withIntermediateDirectories: true)
+        DragMods.override = []; check("拖放：同一卷默认移动", planDrop([f1], to: other) == .move)
+        DragMods.override = .option; check("拖放：⌥ 拷贝", planDrop([f1], to: other) == .copy)
+        DragMods.override = .command; check("拖放：⌘ 移动", planDrop([f1], to: other) == .move)
+        DragMods.override = [.option, .command]; check("拖放：⌥⌘ 替身", planDrop([f1], to: other) == .alias)
+        DragMods.override = []; check("拖放：拖回原文件夹无效", planDrop([f1], to: a) == .none)
+        check("拖放：拖进自身无效", planDrop([a], to: a.appendingPathComponent("dir1")) == .none)
+        check("拖放：⌥ 拖回原文件夹 = 拷贝（副本）", { DragMods.override = .option; defer { DragMods.override = [] }; return planDrop([f1], to: a) == .copy }())
+        if let al = try? FileOps.makeAlias(f1, in: other) {
+            check("⌥⌘ 拖放制作替身：同名、可解析", al.lastPathComponent == "file1.txt" && (try? URL(resolvingAliasFileAt: al))?.standardizedFileURL.path == f1.standardizedFileURL.path)
+        } else { check("⌥⌘ 拖放制作替身", false) }
+        DragMods.override = nil
+        // 可取消
+        let big = root.appendingPathComponent("big"); try? fm.createDirectory(at: big, withIntermediateDirectories: true)
+        for i in 0..<200 { try? "x".write(to: big.appendingPathComponent("f\(i).txt"), atomically: false, encoding: .utf8) }
+        let pr = OpProgress(); pr.cancel()
+        r = FileOps.transfer(((try? fm.contentsOfDirectory(at: big, includingPropertiesForKeys: nil)) ?? []), to: other, mode: .copy, progress: pr)
+        check("取消操作：立即停止", r.cancelled && r.copied.isEmpty)
 
         // duplicate (copy into same folder)
         r = FileOps.transfer([f1], to: a, mode: .copy)
@@ -80,8 +114,8 @@ enum SelfTest {
         r = FileOps.transfer([a], to: d1, mode: .move)
         check("禁止把文件夹放进自身", !r.errs.isEmpty && exists(a))
         try? "x".write(to: b.appendingPathComponent("file1.txt"), atomically: true, encoding: .utf8)
-        r = FileOps.transfer([f1], to: b, mode: .move)
-        check("移动遇到同名不覆盖", !r.errs.isEmpty && exists(f1) && text(b.appendingPathComponent("file1.txt")) == "x")
+        r = FileOps.transfer([f1], to: b, mode: .move, resolve: { _, _ in (.stop, false) })
+        check("移动遇到同名：停止 → 不覆盖", r.moved.isEmpty && exists(f1) && text(b.appendingPathComponent("file1.txt")) == "x")
 
         // trash + undo restore
         let t = FileOps.trash([f1])

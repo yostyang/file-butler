@@ -234,35 +234,70 @@ struct InlineNameField: NSViewRepresentable {
 /// 右键事件在派发前（本地监听器里）找到鼠标下的项目并选中它，然后菜单才弹出。
 final class ItemMarker: NSView {
     var url: URL?
+    var bg = false
     weak var tab: TabModel?
     override func hitTest(_ p: NSPoint) -> NSView? { nil }
 }
 struct ItemMarkerView: NSViewRepresentable {
     let url: URL, tab: TabModel
-    func makeNSView(context: Context) -> ItemMarker { let v = ItemMarker(); v.url = url; v.tab = tab; RightClick.markers.add(v); return v }
-    func updateNSView(_ v: ItemMarker, context: Context) { v.url = url; v.tab = tab }
+    var bg = false
+    func makeNSView(context: Context) -> ItemMarker { let v = ItemMarker(); v.url = url; v.tab = tab; v.bg = bg; RightClick.markers.add(v); return v }
+    func updateNSView(_ v: ItemMarker, context: Context) { v.url = url; v.tab = tab; v.bg = bg }
 }
+/// 全局事件监听：
+/// 1. 活动栏跟随鼠标（移动、滚动、按键、右键时，鼠标所在的栏就是活动栏）
+/// 2. 分栏 / 画廊视图的右键菜单：在右键时才构建（AppKit 菜单），不在每次界面刷新时预先计算
 enum RightClick {
     static var monitor: Any?
+    static weak var app: AppState?
     static let markers = NSHashTable<ItemMarker>.weakObjects()
-    static func install() {
+    static var lastMenu: NSMenu?
+    static func install(_ a: AppState? = nil) {
+        if let a = a { app = a }
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { e in
-            if e.type == .rightMouseDown || e.modifierFlags.contains(.control) { preselect(e) }
-            return e
+        StallWatch.install()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .mouseMoved, .scrollWheel, .keyDown]) { e in
+            guard let a = app else { return e }
+            if let w = e.window, !w.acceptsMouseMovedEvents, w.toolbar != nil { w.acceptsMouseMovedEvents = true }
+            switch e.type {
+            case .mouseMoved, .scrollWheel, .keyDown: PaneFocus.follow(e, app: a); return e
+            default:
+                guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
+                PaneFocus.follow(e, app: a)
+                return contextMenu(e, app: a) ? nil : e
+            }
         }
     }
-    static func preselect(_ e: NSEvent) {
-        guard let w = e.window else { return }
-        for m in markers.allObjects where m.window === w && !m.isHiddenOrHasHiddenAncestor {
-            let r = m.convert(m.bounds, to: nil)
-            guard r.contains(e.locationInWindow), let u = m.url, let tab = m.tab else { continue }
-            if !tab.selection.contains(u) { tab.selection = [u]; tab.anchor = u }
-            return
+    /// 返回 true 表示已经弹出了菜单（事件被消费）
+    static func contextMenu(_ e: NSEvent, app: AppState) -> Bool {
+        guard let w = e.window, let root = w.contentView?.superview else { return false }
+        let p = e.locationInWindow
+        // 列表 / 图标视图是 AppKit 视图，自己处理右键
+        var h = root.hitTest(root.convert(p, from: root.superview))
+        while let v = h { if v is NSTableView || v is NSCollectionView || (v as? NSTextView)?.isFieldEditor == true { return false }; h = v.superview }
+        let live = markers.allObjects.filter { $0.window === w && !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: nil).contains(p) }
+        func paneOf(_ t: TabModel?) -> Int? { app.panes.firstIndex { $0.tab === t } }
+        var pane: Int?, urls: [URL] = [], bgDir: URL?
+        if let m = live.first(where: { !$0.bg }), let u = m.url, let t = m.tab, let i = paneOf(t) {
+            if !t.selection.contains(u) { t.selection = [u]; t.anchor = u }
+            pane = i; urls = itemMenuURLs(t, u)
+        } else if let m = live.first(where: { $0.bg }), let t = m.tab, let i = paneOf(t) {
+            pane = i; bgDir = m.url
+        } else if let i = PaneFocus.pane(at: p, in: w, app: app), app.responders[i].v is FBKeyView,
+                  let k = app.responders[i].v, k.convert(k.bounds, to: nil).contains(p) {
+            pane = i
         }
+        guard let i = pane else { return false }
+        app.focusPane(i)
+        let tab = app.panes[i].tab
+        let m = NSMenu(); fillMenu(m, contextSpec(app: app, tab: tab, pane: i, urls: urls, bgDir: bgDir), app: app)
+        lastMenu = m
+        let view = app.responders[i].v ?? root
+        DispatchQueue.main.async { NSMenu.popUpContextMenu(m, with: e, for: view) }
+        return true
     }
 }
-func itemMenuURLs(_ tab: TabModel, _ it: FileItem) -> [URL] { contextURLs(tab, it) }
+func itemMenuURLs(_ tab: TabModel, _ u: URL) -> [URL] { tab.selection.contains(u) ? tab.selectedURLs : [u] }
 
 struct ViewOptionsSheet: View {
     @EnvironmentObject var app: AppState

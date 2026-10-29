@@ -50,8 +50,8 @@ struct FileTable: NSViewRepresentable {
         tv.target = c; tv.doubleAction = #selector(Coordinator.doubleClick(_:))
         let menu = NSMenu(); menu.delegate = c; tv.menu = menu
         tv.registerForDraggedTypes([.fileURL])
-        tv.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
-        tv.setDraggingSourceOperationMask([.copy, .move], forLocal: false)
+        tv.setDraggingSourceOperationMask([.copy, .move, .link, .generic], forLocal: true)
+        tv.setDraggingSourceOperationMask([.copy, .move, .link, .generic, .delete], forLocal: false)
         let sv = NSScrollView(); sv.documentView = tv; sv.hasVerticalScroller = true; sv.hasHorizontalScroller = true; sv.autohidesScrollers = true
         sv.borderType = .noBorder
         sv.contentView.postsFrameChangedNotifications = true
@@ -156,7 +156,8 @@ struct FileTable: NSViewRepresentable {
         }
         var selectedURLs: [URL] { table?.selectedRowIndexes.compactMap { item($0)?.url } ?? [] }
 
-        func sync() {
+        func sync() { perfMark("sync \(Self.self) \(pane)") { sync0() } }
+        func sync0() {
             guard let tv = table else { return }
             if lastVersion != tab.version {
                 // 正在就地重命名时不要刷新表格（reloadData 会结束编辑），改完名再刷新
@@ -299,31 +300,25 @@ struct FileTable: NSViewRepresentable {
             return tab.path
         }
         func tableView(_ tv: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-            let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-            guard let first = urls.first else { return [] }
-            let target = dropTarget(row, op)
-            if target == tab.path { tv.setDropRow(-1, dropOperation: .on) }
-            if urls.contains(where: { $0.standardizedFileURL.path == target.standardizedFileURL.path }) { return [] }
-            if NSEvent.modifierFlags.contains(.option) { return .copy }
-            if sameVolume(first, target) {
-                if first.deletingLastPathComponent().standardizedFileURL.path == target.standardizedFileURL.path { return [] }
-                return .move
-            }
-            return .copy
+            let urls = fileURLs(info.draggingPasteboard)
+            guard !urls.isEmpty else { return [] }
+            var target = dropTarget(row, op)
+            // 拖到自己身上（被拖的文件夹）= 放进当前文件夹
+            if urls.contains(where: { samePath($0, target) }) { target = tab.path }
+            if samePath(target, tab.path) { tv.setDropRow(-1, dropOperation: .on) }
+            return dragOperation(planDrop(urls, to: target), info)
         }
         func tableView(_ tv: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
-            let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+            let urls = fileURLs(info.draggingPasteboard)
             guard !urls.isEmpty else { return false }
-            app.transfer(urls, to: dropTarget(row, op), mode: NSEvent.modifierFlags.contains(.option) ? .copy : .auto)
-            return true
+            var target = dropTarget(row, op)
+            if urls.contains(where: { samePath($0, target) }) { target = tab.path }
+            return app.performDrop(urls, to: target)
         }
-        func tableView(_ tv: NSTableView, draggingSession session: NSDraggingSession, endedAt p: NSPoint, operation: NSDragOperation) {
-            if operation.contains(.move) || operation.contains(.delete) { tab.reload() }
-        }
-
         func menuNeedsUpdate(_ menu: NSMenu) {
             if menu === headerMenu { menuForHeader(menu); return }
             guard let tv = table else { return }
+            app.focusPane(pane)
             let r = tv.clickedRow
             if r >= 0 && item(r) != nil && !tv.selectedRowIndexes.contains(r) { tv.selectRowIndexes([r], byExtendingSelection: false) }
             let urls = r >= 0 && item(r) != nil ? selectedURLs : []

@@ -133,7 +133,6 @@ struct IconGrid: View {
                     .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture { tab.selection = []; app.focusPane(index) }
-                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
                 }
                 .onChange(of: tab.anchor) { a in if let a = a { withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(a) } } }
             }
@@ -144,7 +143,6 @@ struct IconGrid: View {
         .background(KeyCatcher(app: app, pane: index))
         .contentShape(Rectangle())
         .onTapGesture { tab.selection = []; app.focusPane(index) }
-        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
     }
     func cell(_ it: FileItem, size: CGFloat, order: [URL]) -> some View {
@@ -166,7 +164,6 @@ struct IconGrid: View {
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
         .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: order); app.focusPane(index) })
-        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
         .onDrag { NSItemProvider(object: it.url as NSURL) }
         .modifier(FolderDrop(app: app, item: it))
         .help(it.name)
@@ -224,7 +221,7 @@ struct ColumnBrowser: View {
                     Color.clear.frame(width: max(40, geo.size.width - CGFloat(columns.count) * 231 - (previewItem != nil ? 320 : 0)), height: geo.size.height)
                         .contentShape(Rectangle())
                         .onTapGesture { app.focusPane(index); deselect(in: columns.count - 1) }
-                        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: [], bgDir: columns.last), app: app) }
+                        .background(ItemMarkerView(url: columns.last ?? tab.path, tab: tab, bg: true))
                 }
                 .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
             }
@@ -265,7 +262,6 @@ struct ColumnBrowser: View {
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                     .simultaneousGesture(TapGesture().onEnded { select(it, at: i, items: items) })
-                    .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
                     .onDrag { NSItemProvider(object: it.url as NSURL) }
                     .modifier(FolderDrop(app: app, item: it))
                 }
@@ -273,7 +269,7 @@ struct ColumnBrowser: View {
             .frame(maxWidth: .infinity, minHeight: height, alignment: .top)
             .contentShape(Rectangle())
             .onTapGesture { app.focusPane(index); deselect(in: i) }
-            .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: [], bgDir: dir), app: app) }
+            .background(ItemMarkerView(url: dir, tab: tab, bg: true))
         }
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: dir) }
@@ -321,7 +317,6 @@ struct GalleryView: View {
                                 .contentShape(Rectangle())
                                 .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                                 .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: tab.display.map { $0.url }); app.focusPane(index) })
-                                .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: itemMenuURLs(tab, it)), app: app) }
                                 .onDrag { NSItemProvider(object: it.url as NSURL) }
                                 .modifier(FolderDrop(app: app, item: it))
                                 .help(it.name).id(it.url)
@@ -334,7 +329,6 @@ struct GalleryView: View {
         }
         .background(KeyCatcher(app: app, pane: index))
         .contentShape(Rectangle())
-        .contextMenu { SpecMenu(entries: contextSpec(app: app, tab: tab, pane: index, urls: []), app: app) }
         .onDrop(of: [.fileURL], isTargeted: nil) { app.dropProviders($0, to: tab.path) }
         .onAppear { if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }
         .onChange(of: tab.version) { _ in if tab.selection.isEmpty, let f = tab.display.first { tab.selection = [f.url]; tab.anchor = f.url } }
