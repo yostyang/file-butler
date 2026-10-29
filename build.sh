@@ -2,7 +2,7 @@
 # 编译通用版（Apple 芯片 + Intel）并打包 DMG
 set -e
 cd "$(dirname "$0")"
-SRC="App.swift Transfer.swift IconCollection.swift UITestBasics.swift Model.swift Controller.swift FileTable.swift Browse.swift Views.swift SizeAnalysis.swift SelfTest.swift Bench.swift Menus.swift UITest.swift Media.swift"
+SRC="App.swift Progress.swift Transfer.swift IconCollection.swift UITestBasics.swift Model.swift Controller.swift FileTable.swift Browse.swift Views.swift SizeAnalysis.swift SelfTest.swift Bench.swift Menus.swift UITest.swift Media.swift"
 swiftc -O -parse-as-library -swift-version 5 -target arm64-apple-macos13 $SRC -o fb_arm
 swiftc -O -parse-as-library -swift-version 5 -target x86_64-apple-macos13 $SRC -o fb_x86
 lipo -create fb_arm fb_x86 -output FileButler; rm -f fb_arm fb_x86

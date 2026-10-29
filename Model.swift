@@ -168,6 +168,7 @@ enum FileOps {
     /// 移到废纸篓：用系统的 trashItem（可「放回原处」、同名自动改名）。
     /// 按文件名分 4 路并行：同名的项目总在同一路里依次处理，不会在废纸篓里抢同一个名字。
     static func trash(_ urls: [URL], progress: OpProgress? = nil) -> (done: [(URL, URL)], errs: [String], perm: Bool) {
+        progress?.markRunning()
         progress?.total = urls.count
         let lanes = min(4, max(1, urls.count))
         var buckets = [[Int]](repeating: [], count: lanes)
@@ -792,21 +793,35 @@ final class AppState: ObservableObject {
     private var progressTimer: Timer?
     /// 测试用：同名冲突时的固定选择（nil = 弹出访达样式的对话框）
     static var conflictOverride: (Conflict, Bool)?
-    func beginOp(_ verb: String, count: Int) -> OpProgress {
-        let p = OpProgress(); p.verb = verb; p.total = count; progress = p; opStart = Date()
-        busyText = "正在\(verb) \(count) 项…"
+    /// 正在进行和排队的操作（进度窗口按这个列表显示，可以同时有多个）
+    let center = OpCenter()
+    func beginOp(_ verb: String, count: Int, kind: OpKind = .other, first: String = "", dest: String = "") -> OpProgress {
+        let p = OpProgress(); p.verb = verb; p.total = count; p.kind = kind; p.firstName = first; p.destName = dest
+        center.add(p)
+        if progress == nil { progress = p; opStart = Date(); startStatusTimer() }
+        return p
+    }
+    private func startStatusTimer() {
+        busyText = progress.map { "正在\($0.verb) \($0.total) 项…" }
         progressTimer?.invalidate()
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             guard let self = self, let p = self.progress else { return }
-            let t = "正在\(p.verb) \(min(p.done + 1, p.total))/\(p.total) 项…"
+            var t = "正在\(p.verb) \(min(p.done + 1, p.total))/\(p.total) 项…"
+            let bt = p.bytesTotal
+            if bt > 0 { t += " \(min(100, Int(Double(p.bytesDone) * 100 / Double(bt))))%" }
             if self.busyText != t { self.busyText = t }
         }
-        return p
     }
     func endOp(_ p: OpProgress) {
-        if progress === p { lastOpMs = Date().timeIntervalSince(opStart) * 1000; progress = nil; progressTimer?.invalidate(); progressTimer = nil; busyText = nil }
+        center.remove(p)
+        guard progress === p else { return }
+        lastOpMs = Date().timeIntervalSince(opStart) * 1000
+        progressTimer?.invalidate(); progressTimer = nil
+        // 还有排队的操作：状态栏接着显示它；否则清空
+        if let next = center.ops.first { progress = next; opStart = Date(); startStatusTimer() } else { progress = nil; busyText = nil }
     }
     func cancelOp() { progress?.cancel() }
+    func cancelAll() { for p in center.ops { p.cancel() } }
     /// 访达的同名冲突对话框（文字、按钮顺序与访达一致：保留两者 | 停止 | 替换；多个冲突时才有「应用到全部」）
     static func conflictAlert(name: String, move: Bool, multi: Bool) -> NSAlert {
         let a = NSAlert()
@@ -862,7 +877,7 @@ final class AppState: ObservableObject {
     }
     func transfer(_ urls: [URL], to dir: URL, mode: TransferMode) {
         guard !urls.isEmpty else { return }
-        let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count)
+        let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count, kind: (mode == .move || (mode == .auto && sameVolume(urls[0], dir))) ? .move : .copy, first: urls[0].lastPathComponent, dest: dir.lastPathComponent)
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
         opQueue.async {
             let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv, multi: p.conflictsLeft > 1) ?? (.stop, false) })
@@ -883,7 +898,7 @@ final class AppState: ObservableObject {
     }
     func trash(_ urls: [URL]) {
         guard !urls.isEmpty else { NSSound.beep(); return }
-        let p = beginOp("移到废纸篓", count: urls.count)
+        let p = beginOp("移到废纸篓", count: urls.count, kind: .trash, first: urls[0].lastPathComponent)
         let dirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
         opQueue.async {
             let r = FileOps.trash(urls, progress: p)
@@ -978,6 +993,7 @@ final class AppState: ObservableObject {
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
         let p = beginOp("撤销", count: 1)
         opQueue.async {
+            p.markRunning()
             var put: [URL] = []
             let err: String? = { do { put = try FileOps.undo(op); return nil } catch { return error.localizedDescription } }()
             DispatchQueue.main.async {

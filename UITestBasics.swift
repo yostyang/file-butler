@@ -1,3 +1,4 @@
+import SwiftUI
 import AppKit
 import Foundation
 
@@ -347,6 +348,8 @@ extension UITestRunner {
 
         // ===== 访达规则审计：冲突、撤销、无效操作 =====
         await finderRuleTests(&trashed)
+        // ===== 访达式进度窗口 =====
+        await progressTests()
         // ===== 性能：大批量 =====
         let B = D.appendingPathComponent("批量"), T = D.appendingPathComponent("批量目标")
         try? fm.createDirectory(at: B, withIntermediateDirectories: true); try? fm.createDirectory(at: T, withIntermediateDirectories: true)
@@ -445,6 +448,102 @@ extension UITestRunner {
     }
 
     /// 用户反馈：同卷拖动被拷贝、同名时报「已存在」错误。这里逐条按访达规则验证（两栏双向）。
+    func progressTests() async {
+        let D = TestEnv.fixture.realFileURL.appendingPathComponent("进度"), S = D.appendingPathComponent("源"), T = D.appendingPathComponent("目标")
+        try? fm.removeItem(at: D)
+        for d in [S, T] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        let big = S.appendingPathComponent("big.bin")
+        // 64 MB 实际数据（不是稀疏文件）
+        let chunk = Data((0..<(1 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        fm.createFile(atPath: big.path, contents: nil)
+        if let h = try? FileHandle(forWritingTo: big) { for _ in 0..<64 { h.write(chunk) }; try? h.close() }
+        mkfile(S.appendingPathComponent("small.txt"), "s")
+        let c = app.center
+        FileOps.noClone = true
+        defer { FileOps.noClone = false; FileOps.testThrottleMs = 0 }
+        // 1. 瞬间完成的操作不弹进度窗口
+        var t0 = Date(); let before = c.shownCount
+        app.transfer([S.appendingPathComponent("small.txt")], to: T, mode: .copy)
+        var ms = await waitUntil { exists(T.appendingPathComponent("small.txt")) && idle() }
+        await settle(0.9)
+        check("进度窗口：瞬间完成的拷贝不弹出进度窗口", c.shownCount == before && !c.isPanelVisible, "\(ms)ms", t0: t0)
+        // 2. 大文件拷贝：0.75 秒后出现，标题 / 进度 / 字节数 / 剩余时间
+        FileOps.testThrottleMs = 150
+        t0 = Date()
+        app.transfer([big], to: T, mode: .copy)
+        ms = await waitUntil(5) { c.isPanelVisible }
+        let shownAfter = Date().timeIntervalSince(t0)
+        check("进度窗口：大文件拷贝时出现（不早于 0.75 秒）", c.isPanelVisible && shownAfter >= 0.7, String(format: "%.2fs", shownAfter), t0: t0)
+        await sleep(1.8)
+        let p = c.ops.first
+        let title = p.map { OpCenter.title($0) } ?? "", detail = p.map { OpCenter.detail($0) } ?? ""
+        check("进度窗口：标题「正在将“big.bin”拷贝到“目标”」", title == "正在将“big.bin”拷贝到“目标”", title)
+        check("进度窗口：明细「已拷贝 x，共 64 MB — 约剩…」", detail.hasPrefix("已拷贝 ") && detail.contains("共 67.1 MB") && detail.contains("—"), detail)
+        let bd = p?.bytesDone ?? 0
+        check("进度窗口：字节进度在增长且没有完成", bd > 0 && bd < 64 << 20, "\(bd)")
+        check("状态栏：显示百分比", (app.busyText ?? "").contains("%"), app.busyText ?? "nil")
+        check("进度窗口：标题栏是「拷贝」", c.panelWindow?.title == "拷贝", c.panelWindow?.title ?? "nil")
+        // 两个操作同时：叠在同一个窗口里
+        app.transfer([S.appendingPathComponent("small.txt")], to: S.appendingPathComponent("..").standardizedFileURL.appendingPathComponent("目标"), mode: .copy)
+        await sleep(0.3)
+        check("进度窗口：多个操作叠在一起显示，后一个显示「等待中…」", c.ops.count == 2 && OpCenter.detail(c.ops[1]) == "等待中…", c.ops.count == 2 ? OpCenter.detail(c.ops[1]) : "\(c.ops.count)")
+        // 截图（亮 / 暗）
+        for (n, ap) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let host = NSHostingView(rootView: ProgressList(center: c))
+            let sz = host.fittingSize
+            host.frame = NSRect(x: 0, y: 0, width: max(460, sz.width), height: max(60, sz.height))
+            let pw = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            pw.appearance = NSAppearance(named: ap); pw.contentView = host
+            host.layoutSubtreeIfNeeded(); await sleep(0.3); host.layoutSubtreeIfNeeded(); host.display()
+            shot("progress-\(n)", view: host)
+            pw.contentView = nil
+        }
+        let okShots = ["light", "dark"].allSatisfy { ((try? fm.attributesOfItem(atPath: TestEnv.out.appendingPathComponent("progress-\($0).png").path)[.size] as? Int) ?? 0) > 2000 }
+        check("进度窗口：亮色 / 暗色截图", okShots)
+        // 3. 停止：不留半截文件，窗口消失
+        t0 = Date(); p?.cancel()
+        ms = await waitUntil(10) { idle() && c.ops.isEmpty }
+        await settle(0.3)
+        check("进度窗口：点停止 → 停止拷贝、不留半截文件、原件还在", !exists(T.appendingPathComponent("big.bin")) && exists(big) && app.alert == nil, "\(ms)ms", t0: t0)
+        check("进度窗口：操作结束后窗口消失", !c.isPanelVisible)
+        // 4. 完整拷贝：完成后消失，内容一致
+        FileOps.testThrottleMs = 15
+        t0 = Date()
+        app.transfer([big], to: T, mode: .copy)
+        ms = await waitUntil(30) { idle() && c.ops.isEmpty }
+        await settle(0.3)
+        let sz = (try? fm.attributesOfItem(atPath: T.appendingPathComponent("big.bin").path)[.size] as? Int) ?? 0
+        check("进度窗口：拷贝完成后自动消失，文件完整", !c.isPanelVisible && sz == 64 << 20 && fm.contentsEqual(atPath: big.path, andPath: T.appendingPathComponent("big.bin").path), "\(ms)ms", t0: t0)
+        // 4b. 回归：单个文件夹（含 0 字节文件、符号链接、包）1/1 项拷贝能完成，字节数对得上，状态不会挂住
+        FileOps.testThrottleMs = 0
+        let K = S.appendingPathComponent("素材"), pkg = K.appendingPathComponent("X.app/Contents")
+        try? fm.createDirectory(at: pkg, withIntermediateDirectories: true)
+        mkfile(pkg.appendingPathComponent("Info.plist"), "plist"); fm.createFile(atPath: K.appendingPathComponent("空.txt").path, contents: Data())
+        try? fm.createSymbolicLink(atPath: K.appendingPathComponent("链接").path, withDestinationPath: "/nonexistent/目标")
+        try? chunk.write(to: K.appendingPathComponent("a.bin"))
+        t0 = Date()
+        let before2 = c.shownCount
+        app.transfer([K], to: T, mode: .copy)
+        let rp = c.ops.last
+        ms = await waitUntil(10) { idle() && c.ops.isEmpty }
+        let K2 = T.appendingPathComponent("素材")
+        check("回归：拷贝 1/1 个文件夹（0 字节文件、坏符号链接、包）能完成，状态栏不挂住", idle() && exists(K2.appendingPathComponent("空.txt")) && FileOps.isSymlink(K2.appendingPathComponent("链接")) && exists(K2.appendingPathComponent("X.app/Contents/Info.plist")) && app.alert == nil, "\(ms)ms", t0: t0)
+        check("回归：文件夹拷贝的字节数 = 总字节数", rp.map { $0.bytesTotal == $0.bytesDone && $0.bytesTotal == (1 << 20) + 5 } ?? false, rp.map { "\($0.bytesDone)/\($0.bytesTotal)" } ?? "nil")
+        _ = before2
+        // 5. 文案
+        let q = OpProgress(); q.kind = .move; q.total = 3; q.destName = "备份"; q.markRunning()
+        check("进度窗口：移动多个项目的标题", OpCenter.title(q) == "正在将 3 个项目移动到“备份”", OpCenter.title(q))
+        q.step()
+        check("进度窗口：移动按项目数显示", OpCenter.detail(q) == "已移动 1 个项目，共 3 个", OpCenter.detail(q))
+        let tq = OpProgress(); tq.kind = .trash; tq.total = 1; tq.firstName = "a.txt"
+        check("进度窗口：移到废纸篓的标题", OpCenter.title(tq) == "正在将“a.txt”移到废纸篓", OpCenter.title(tq))
+        check("进度窗口：剩余时间文案", OpCenter.eta(10) == "约剩 10 秒" && OpCenter.eta(150) == "约剩 3 分钟" && OpCenter.eta(2) == "马上就好")
+        // 看门狗：长时间没有进展要说出来
+        let w = OpProgress(); w.kind = .copy; w.total = 1; w.markRunning(); w.bytesTotal = 100; w.addBytes(10)
+        let d = OpCenter.detail(w, now: Date().addingTimeInterval(40))
+        check("进度窗口：长时间没有进展时提示（不再静默卡住）", d.contains("没有进展"), d)
+        try? fm.removeItem(at: D)
+    }
     func finderRuleTests(_ trashed: inout [URL]) async {
         let D = TestEnv.fixture.realFileURL.appendingPathComponent("访达规则"), L = D.appendingPathComponent("甲"), R = D.appendingPathComponent("乙")
         try? fm.removeItem(at: D)

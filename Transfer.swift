@@ -7,15 +7,39 @@ import Foundation
 final class OpProgress {
     private let lock = NSLock()
     private var _done = 0, _total = 0, _cancelled = false
+    private var _bytesDone: Int64 = 0, _bytesTotal: Int64 = -1, _lastTick = Date()
     var verb = "拷贝"
+    /// 进度窗口用：操作种类、项目名、目标文件夹、开始时间
+    var kind: OpKind = .copy
+    var firstName = "", destName = ""
+    let started = Date()
     /// 本次操作还剩多少个同名冲突（决定冲突对话框是否显示「应用到全部」）
     var conflictsLeft: Int { get { lock.lock(); defer { lock.unlock() }; return _conflicts } set { lock.lock(); _conflicts = newValue; lock.unlock() } }
     private var _conflicts = 0
     var done: Int { lock.lock(); defer { lock.unlock() }; return _done }
     var total: Int { get { lock.lock(); defer { lock.unlock() }; return _total } set { lock.lock(); _total = newValue; lock.unlock() } }
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return _cancelled }
-    func step() { lock.lock(); _done += 1; lock.unlock() }
+    /// 拷贝的字节数（-1 = 还在统计大小）
+    var bytesTotal: Int64 { get { lock.lock(); defer { lock.unlock() }; return _bytesTotal } set { lock.lock(); _bytesTotal = newValue; lock.unlock() } }
+    var bytesDone: Int64 { lock.lock(); defer { lock.unlock() }; return _bytesDone }
+    /// 上一次有进展的时间（看门狗：长时间没有进展时在进度窗口里说明）
+    var lastTick: Date { lock.lock(); defer { lock.unlock() }; return _lastTick }
+    func addBytes(_ n: Int64) { guard n != 0 else { return }; lock.lock(); _bytesDone += n; _lastTick = Date(); lock.unlock() }
+    func step() { lock.lock(); _done += 1; _lastTick = Date(); lock.unlock() }
     func cancel() { lock.lock(); _cancelled = true; lock.unlock() }
+    /// 排队中还是已经开始（后台队列是串行的）
+    var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return _running }
+    private var _running = false
+    func markRunning() { lock.lock(); _running = true; _lastTick = Date(); lock.unlock() }
+}
+enum OpKind { case copy, move, trash, other }
+
+/// 每个 copyfile 调用一份：记录这一项已经计入进度的字节数
+final class CopyCtx {
+    let p: OpProgress
+    var counted: Int64 = 0      // 本项（含子文件）已计入的字节
+    var cur: Int64 = 0          // 当前文件已计入的字节
+    init(_ p: OpProgress) { self.p = p }
 }
 
 enum Conflict { case replace, keepBoth, skip, stop }
@@ -28,30 +52,59 @@ struct TransferResult {
     var cancelled = false
 }
 
-/// 拷贝回调：每个文件拷贝前检查是否已取消（copyfile 的 C 回调不能捕获变量，通过 ctx 传入进度对象）
+/// 拷贝回调：检查取消、统计已拷贝字节（copyfile 的 C 回调不能捕获变量，通过 ctx 传入）
 private func copyCallback(_ what: Int32, _ stage: Int32, _ state: copyfile_state_t?, _ src: UnsafePointer<CChar>?, _ dst: UnsafePointer<CChar>?, _ ctx: UnsafeMutableRawPointer?) -> Int32 {
     guard let ctx = ctx else { return COPYFILE_CONTINUE }
-    let p = Unmanaged<OpProgress>.fromOpaque(ctx).takeUnretainedValue()
-    return p.isCancelled ? COPYFILE_QUIT : COPYFILE_CONTINUE
+    let c = Unmanaged<CopyCtx>.fromOpaque(ctx).takeUnretainedValue()
+    if what == COPYFILE_COPY_DATA && stage == COPYFILE_PROGRESS, let st = state {
+        var copied: off_t = 0
+        if copyfile_state_get(st, UInt32(COPYFILE_STATE_COPIED), &copied) == 0 {
+            let d = Int64(copied) - c.cur; if d > 0 { c.cur = Int64(copied); c.counted += d; c.p.addBytes(d) }
+        }
+        if FileOps.testThrottleMs > 0 { usleep(UInt32(FileOps.testThrottleMs * 1000)) }
+    } else if what == COPYFILE_RECURSE_FILE && stage == COPYFILE_FINISH, let s = src {
+        // 克隆 / 小文件不会有数据进度回调：文件完成时补齐它的大小
+        var st = stat(); if lstat(s, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG { let d = Int64(st.st_size) - c.cur; if d > 0 { c.counted += d; c.p.addBytes(d) } }
+        c.cur = 0
+    } else if what == COPYFILE_RECURSE_FILE && stage == COPYFILE_START { c.cur = 0 }
+    return c.p.isCancelled ? COPYFILE_QUIT : COPYFILE_CONTINUE
 }
 
 extension FileOps {
     /// APFS 上用 clonefile（瞬间完成、不占额外空间），其他卷自动退回普通拷贝；可取消
-    static func copyItem(_ src: URL, to dst: URL, progress: OpProgress?) throws {
+    /// 测试用：关闭克隆 / 每个数据块后暂停，让大文件拷贝可以被观察和取消
+    static var noClone = false
+    static var testThrottleMs = 0
+    static func copyItem(_ src: URL, to dst: URL, progress: OpProgress?, size: Int64 = 0) throws {
         let st = copyfile_state_alloc(); defer { copyfile_state_free(st) }
         let cb: copyfile_callback_t = copyCallback
-        let p = progress ?? OpProgress()
-        let ctx = Unmanaged.passUnretained(p).toOpaque()
+        let c = CopyCtx(progress ?? OpProgress())
+        let ctx = Unmanaged.passUnretained(c).toOpaque()
         copyfile_state_set(st, UInt32(COPYFILE_STATE_STATUS_CB), unsafeBitCast(cb, to: UnsafeRawPointer.self))
         copyfile_state_set(st, UInt32(COPYFILE_STATE_STATUS_CTX), ctx)
-        let flags = copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_CLONE | COPYFILE_NOFOLLOW_SRC)
-        let r = withExtendedLifetime(p) { copyfile(src.path, dst.path, st, flags) }
+        var f = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC
+        if !noClone { f |= COPYFILE_CLONE }
+        let r = withExtendedLifetime(c) { copyfile(src.path, dst.path, st, copyfile_flags_t(f)) }
         if r != 0 {
             let e = errno
-            try? fm.removeItem(at: dst)
-            if p.isCancelled { throw FBError("已取消") }
+            c.p.addBytes(-c.counted)             // 没拷完的这一项不算进度
+            try? fm.removeItem(at: dst)          // 不留半截文件（访达也是这样）
+            if c.p.isCancelled { throw FBError("已取消") }
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(e), userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(e))])
         }
+        if size > c.counted { c.p.addBytes(size - c.counted) }
+    }
+    /// 一项（文件或文件夹）的总字节数，只用 lstat，不跟随符号链接
+    static func treeSize(_ u: URL, cancelled: () -> Bool = { false }) -> Int64 {
+        var st = stat(); guard lstat(u.path, &st) == 0 else { return 0 }
+        if (st.st_mode & S_IFMT) != S_IFDIR { return Int64(st.st_size) }
+        var sum: Int64 = 0, n = 0
+        guard let e = fm.enumerator(at: u, includingPropertiesForKeys: [.totalFileSizeKey, .isRegularFileKey], options: []) else { return 0 }
+        for case let f as URL in e {
+            n += 1; if n % 2000 == 0 && cancelled() { break }
+            if let v = try? f.resourceValues(forKeys: [.isRegularFileKey, .totalFileSizeKey]), v.isRegularFile == true { sum += Int64(v.totalFileSize ?? 0) }
+        }
+        return sum
     }
 
     /// 访达规则：同一卷默认移动，跨卷默认拷贝；拷贝到原文件夹 = 「副本」；目标已有同名项目时询问（替换 / 保留两者 / 停止）
@@ -66,6 +119,7 @@ extension FileOps {
         var reserved = Set<String>()          // 本批次已占用的目标名（避免两项落到同一个名字）
         func taken(_ u: URL) -> Bool { reserved.contains(u.path) || lexists(u.path) }
         func unique(_ name: String, copy: Bool) -> URL { uniqueURL(in: dir, name: name, copy: copy, taken: taken) }
+        progress?.markRunning()
         progress?.total = urls.count
         // 先数一遍会冲突的项目（只用 lstat，很快）
         if resolve != nil {
@@ -115,11 +169,22 @@ extension FileOps {
             if progress?.isCancelled == true { res.cancelled = true; break }
             defer { progress?.step() }
             if renamex_np(m.src.path, m.dst.path, UInt32(RENAME_EXCL)) == 0 { res.moved.append((m.src, m.dst)); continue }
+            if errno == EXDEV {
+                // 跨卷移动 = 拷贝（有字节进度、可取消、不留半截）+ 删除原件
+                let size = treeSize(m.src)
+                if let p = progress { p.bytesTotal = max(0, p.bytesTotal) + size }
+                do { try copyItem(m.src, to: m.dst, progress: progress, size: size); try fm.removeItem(at: m.src); res.moved.append((m.src, m.dst)) }
+                catch { if progress?.isCancelled != true { res.errs.append("「\(m.src.lastPathComponent)」：\(error.localizedDescription)") } }
+                continue
+            }
             do { try fm.moveItem(at: m.src, to: m.dst); res.moved.append((m.src, m.dst)) }
             catch { res.errs.append("「\(m.src.lastPathComponent)」：\(error.localizedDescription)") }
         }
         // 执行：拷贝（4 路并行；结果按原顺序汇总）
         if !copies.isEmpty && !res.cancelled {
+            // 先统计要拷贝的总字节数（进度窗口显示「已拷贝 x，共 y — 约剩 z」）
+            let sizes = copies.map { treeSize($0.src, cancelled: { progress?.isCancelled == true }) }
+            progress?.bytesTotal = sizes.reduce(0, +)
             var out = [String?](repeating: nil, count: copies.count)   // nil = 成功，否则为错误信息
             var ran = [Bool](repeating: false, count: copies.count)
             let lock = NSLock(); var next = 0
@@ -131,7 +196,7 @@ extension FileOps {
                         lock.lock(); let i = next; next += 1; lock.unlock()
                         if i >= copies.count || progress?.isCancelled == true { return }
                         let c = copies[i]
-                        do { try copyItem(c.src, to: c.dst, progress: progress) } catch { o[i] = "「\(c.src.lastPathComponent)」：\(error.localizedDescription)" }
+                        do { try copyItem(c.src, to: c.dst, progress: progress, size: sizes[i]) } catch { o[i] = "「\(c.src.lastPathComponent)」：\(error.localizedDescription)" }
                         r[i] = true
                         progress?.step()
                     }
