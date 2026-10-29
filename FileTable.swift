@@ -60,40 +60,38 @@ final class MarqueeView: NSView {
 /// 大目录批量移入、移出时要一次创建几十个单元格，子视图方案每格要建 2~3 个控件并做布局，绘制方案几乎没有开销。
 /// 只有就地重命名时才临时放一个可编辑的 NSTextField。
 final class DrawCell: NSTableCellView {
-    var text = "" { didSet { if text != oldValue { needsDisplay = true; setAccessibilityLabel(text) } } }
+    // 用和 NSTextField 标签相同的 NSTextFieldCell 绘制：字体、基线、截断、选中时反白都和原生标签完全一致，但不需要子视图
+    let tcell: NSTextFieldCell = { let c = NSTextFieldCell(textCell: ""); c.isBordered = false; c.drawsBackground = false; c.isEditable = false; c.font = .systemFont(ofSize: NSFont.systemFontSize); c.textColor = .labelColor; c.truncatesLastVisibleLine = true; return c }()
+    let tagCell: NSTextFieldCell = { let c = NSTextFieldCell(textCell: ""); c.isBordered = false; c.drawsBackground = false; c.isEditable = false; return c }()
+    var text = "" { didSet { if text != oldValue { tcell.stringValue = text; needsDisplay = true; setAccessibilityLabel(text) } } }
     var icon: NSImage? { didSet { if icon !== oldValue { needsDisplay = true } } }
-    var tags = NSAttributedString() { didSet { if tags != oldValue { needsDisplay = true } } }
-    var secondary = false, mono = false, rightAlign = false, middleTrunc = false
-    override var backgroundStyle: NSView.BackgroundStyle { didSet { if backgroundStyle != oldValue { needsDisplay = true } } }
-    override var isFlipped: Bool { true }
-    override var wantsUpdateLayer: Bool { false }
+    var tags = NSAttributedString() { didSet { if tags != oldValue { tagCell.attributedStringValue = tags; needsDisplay = true } } }
+    var secondary = false { didSet { tcell.textColor = secondary ? .secondaryLabelColor : .labelColor } }
+    var mono = false { didSet { tcell.font = mono ? .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular) : .systemFont(ofSize: NSFont.systemFontSize) } }
+    var rightAlign = false { didSet { tcell.alignment = rightAlign ? .right : .natural } }
+    var middleTrunc = false { didSet { tcell.lineBreakMode = middleTrunc ? .byTruncatingMiddle : .byTruncatingTail } }
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { if backgroundStyle != oldValue { tcell.backgroundStyle = backgroundStyle; tagCell.backgroundStyle = backgroundStyle; needsDisplay = true } } }
     var editor: NSTextField?
-    var font: NSFont { mono ? .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular) : .systemFont(ofSize: NSFont.systemFontSize) }
-    var textX: CGFloat { icon != nil || isName ? 24 : 2 }
+    var font: NSFont { tcell.font ?? .systemFont(ofSize: NSFont.systemFontSize) }
     var isName = false
+    var textX: CGFloat { isName ? 24 : 2 }
     func textRect() -> NSRect {
-        let h = ceil(font.ascender - font.descender + font.leading) + 1
+        let h = ceil(tcell.cellSize.height)
         return NSRect(x: textX, y: floor((bounds.height - h) / 2), width: max(0, bounds.width - textX - 2), height: h)
     }
     override func draw(_ dirtyRect: NSRect) {
-        let emph = backgroundStyle == .emphasized
         if let ic = icon {
             ic.draw(in: NSRect(x: 2, y: floor((bounds.height - 16) / 2), width: 16, height: 16), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
         guard editor == nil else { return }
-        let ps = NSMutableParagraphStyle()
-        ps.lineBreakMode = middleTrunc ? .byTruncatingMiddle : .byTruncatingTail
-        ps.alignment = rightAlign ? .right : .left
-        let color: NSColor = emph ? .alternateSelectedControlTextColor : (secondary ? .secondaryLabelColor : .labelColor)
         var r = textRect()
         if tags.length > 0 {
-            let tw = ceil(tags.size().width)
-            let nw = min(ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2, max(0, r.width - tw - 4))
-            let tr = NSRect(x: r.minX + nw + 4, y: r.minY, width: tw, height: r.height)
-            tags.draw(with: tr, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            let tw = ceil(tagCell.cellSize.width)
+            let nw = min(ceil(tcell.cellSize.width), max(0, r.width - tw - 4))
+            tagCell.draw(withFrame: NSRect(x: r.minX + nw + 4, y: r.minY, width: tw, height: r.height), in: self)
             r.size.width = nw
         }
-        (text as NSString).draw(with: r, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: [.font: font, .foregroundColor: color, .paragraphStyle: ps])
+        tcell.draw(withFrame: r, in: self)
     }
     /// 就地重命名：放一个真正的文本框在文字的位置
     func beginEditing() -> NSTextField {

@@ -43,6 +43,10 @@ enum TestEnv {
         ud.set([fixture.appendingPathComponent("文件夹A").path], forKey: "pane1Tabs"); ud.set(["list"], forKey: "pane1Modes"); ud.set(0, forKey: "pane1Cur")
         ud.set(false, forKey: "showInfo"); ud.set(true, forKey: "showPathBar"); ud.set(80.0, forKey: "iconSize")
         ud.set(true, forKey: "fdaPromptDismissed")
+        // 双栏、按名称升序、不分组、默认列：不受用户自己的设置影响（快照和测试才可重复）
+        ud.set(true, forKey: "dual"); ud.set("name", forKey: "sortKey"); ud.set(true, forKey: "sortAsc"); ud.set(false, forKey: "showHidden")
+        ud.removeObject(forKey: "listColumns")
+        for k in ud.dictionaryRepresentation().keys where k.hasPrefix("listColW_") || k.hasPrefix("groupKey") { ud.removeObject(forKey: k) }
         // 列宽等界面记忆用默认值，保证截图稳定（测试结束会还原）
         for k in ud.dictionaryRepresentation().keys where k.hasPrefix("NSTableView") || k.hasPrefix("NSSplitView") || k.hasPrefix("NSWindow Frame") { ud.removeObject(forKey: k) }
     }
