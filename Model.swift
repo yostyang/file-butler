@@ -487,6 +487,8 @@ final class TabModel: ObservableObject, Identifiable {
     }
 }
 
+final class OpStatus: ObservableObject { @Published var text: String? }
+
 final class PaneModel: ObservableObject {
     @Published var tabs: [TabModel] = []
     @Published var current = 0
@@ -519,7 +521,9 @@ final class AppState: ObservableObject {
     @Published var renameReq: RenameReq?
     @Published var sizeReq: SizeReq?
     @Published var editingPane: Int?
-    @Published var busyText: String?
+    /// 进度文字单独放在一个对象里：只刷新状态栏，不让整个窗口每 150ms 重绘一次
+    let status = OpStatus()
+    var busyText: String? { get { status.text } set { if status.text != newValue { status.text = newValue } } }
     @Published var searchFocus = 0
     @Published var showFDA = false
     @Published var inlineRename: URL?
@@ -646,18 +650,34 @@ final class AppState: ObservableObject {
     func open(_ it: FileItem, in tab: TabModel) {
         if it.isFolderLike { tab.navigate(it.url) } else { NSWorkspace.shared.open(it.url) }
     }
+    /// 写剪贴板放到后台（几千个 URL 写入要 100ms 以上）；写完之前粘贴直接用内存里的列表
+    let clipQueue = DispatchQueue(label: "filebutler.clipboard", qos: .userInitiated)
+    var clipPending: (Int, [URL], Bool)?
+    var clipToken = 0
     func copyToClipboard(_ urls: [URL], cut: Bool) {
         guard !urls.isEmpty else { NSSound.beep(); return }
-        let pb = NSPasteboard.general; pb.clearContents(); pb.writeObjects(urls.map { $0 as NSURL })
-        cutChangeCount = cut ? pb.changeCount : -1
-        ownClip = (pb.changeCount, urls)
+        clipToken += 1; let tok = clipToken
+        clipPending = (tok, urls, cut); ownClip = nil; cutChangeCount = -1
+        clipQueue.async {
+            let pb = NSPasteboard.general; pb.clearContents(); pb.writeObjects(urls.map { $0 as NSURL })
+            let cc = pb.changeCount
+            DispatchQueue.main.async {
+                guard self.clipPending?.0 == tok else { return }
+                self.clipPending = nil; self.ownClip = (cc, urls)
+                self.cutChangeCount = cut ? cc : -1
+            }
+        }
     }
     func paste(into dir: URL? = nil, forceMove: Bool = false) {
         let pb = NSPasteboard.general
         // 自己拷贝的内容直接用内存里的列表（读取剪贴板里几千个 URL 很慢）
-        let urls = ownClip?.0 == pb.changeCount ? ownClip!.1 : perfMark("paste read") { fileURLs(pb) }
+        var urls: [URL], cut: Bool
+        if let p = clipPending { urls = p.1; cut = p.2 || forceMove; if p.2 { clipPending = (p.0, p.1, false) } }
+        else {
+            urls = ownClip?.0 == pb.changeCount ? ownClip!.1 : perfMark("paste read") { fileURLs(pb) }
+            cut = pb.changeCount == cutChangeCount || forceMove
+        }
         guard !urls.isEmpty else { NSSound.beep(); return }
-        let cut = pb.changeCount == cutChangeCount || forceMove
         transfer(urls, to: dir ?? activeTab.path, mode: cut ? .move : .copy)
         if cut { cutChangeCount = -1 }
     }

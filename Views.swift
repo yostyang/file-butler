@@ -507,19 +507,23 @@ struct PathSegmentsView: View {
 // MARK: Status bar
 struct StatusBar: View {
     @EnvironmentObject var app: AppState
-    var body: some View { StatusContent(tab: app.activeTab, busy: app.busyText, dual: app.dual, active: app.active) }
+    var body: some View { StatusContent(tab: app.activeTab, status: app.status, dual: app.dual, active: app.active) }
 }
 struct StatusContent: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
-    let busy: String?, dual: Bool, active: Int
+    @ObservedObject var status: OpStatus
+    let dual: Bool, active: Int
     var body: some View {
         let sum = perfMark("status summary") { tab.selectionSummary }
         HStack(spacing: 10) {
             if dual { Text(active == 0 ? "左栏" : "右栏").fontWeight(.semibold).foregroundStyle(accentA) }
             Text("\(tab.display.count) 个项目")
             if sum.count > 0 { Text("已选 \(sum.count) 项，\(fmtBytes(sum.size))" + (sum.hasFolder ? "（不含文件夹）" : "")) }
-            if let b = busy { ProgressView().controlSize(.small); Text(b) }
+            if let b = status.text {
+                ProgressView().controlSize(.small); Text(b)
+                Button { app.cancelOp() } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).help("停止")
+            }
             Spacer()
             if tab.viewMode == .icon && !tab.isGlobalSearch {
                 Image(systemName: "photo").font(.system(size: 9))

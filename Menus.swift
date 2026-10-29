@@ -12,7 +12,8 @@ indirect enum MEntry {
 }
 
 func pasteboardFileCount() -> Int {
-    (NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?.count ?? 0
+    if let a = RightClick.app { if let p = a.clipPending { return p.1.count }; if let o = a.ownClip, o.0 == NSPasteboard.general.changeCount { return o.1.count } }
+    return (NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?.count ?? 0
 }
 
 func displayNameNoExt(_ u: URL) -> String { u.lastPathComponent }
