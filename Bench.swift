@@ -54,3 +54,38 @@ enum Bench {
         return 0
     }
 }
+
+/// `FileButler --opbench`：大文件 / 万级文件夹的后台文件操作耗时（只在 /tmp/fb-opbench 里，结束时清理，包括它放进废纸篓的项目）
+enum OpBench {
+    static func run() -> Int32 {
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/fb-opbench"); try? fm.removeItem(at: root)
+        let src = root.appendingPathComponent("源"), dst = root.appendingPathComponent("目标"), dst2 = root.appendingPathComponent("目标2")
+        for d in [src, dst, dst2] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        // 2 GB 实际数据的文件（不是稀疏文件）
+        let big = src.appendingPathComponent("大文件.bin")
+        fm.createFile(atPath: big.path, contents: nil)
+        if let h = try? FileHandle(forWritingTo: big) { let chunk = Data(repeating: 0x5A, count: 64 << 20); for _ in 0..<32 { h.write(chunk) }; try? h.close() }
+        // 1 万个小文件的文件夹
+        let folder = src.appendingPathComponent("万个文件"); try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let small = Data(repeating: 1, count: 1024)
+        for i in 0..<10000 { fm.createFile(atPath: folder.appendingPathComponent("f\(i).txt").path, contents: small) }
+        func t(_ label: String, _ f: () -> Void) { let s = CFAbsoluteTimeGetCurrent(); f(); print(String(format: "OPBENCH %@ %.0f ms", label, (CFAbsoluteTimeGetCurrent() - s) * 1000)) }
+        var trashed: [URL] = []
+        t("拷贝 2GB 单文件（同卷，克隆）") { _ = FileOps.transfer([big], to: dst, mode: .copy) }
+        t("移动 2GB 单文件（同卷）") { _ = FileOps.transfer([dst.appendingPathComponent("大文件.bin")], to: dst2, mode: .move) }
+        t("移到废纸篓 2GB 单文件") { trashed += FileOps.trash([dst2.appendingPathComponent("大文件.bin")]).done.map { $0.1 } }
+        t("拷贝 1 万文件的文件夹（同卷）") { _ = FileOps.transfer([folder], to: dst, mode: .copy) }
+        t("移动 1 万文件的文件夹（同卷）") { _ = FileOps.transfer([dst.appendingPathComponent("万个文件")], to: dst2, mode: .move) }
+        t("列出 1 万项（读取属性）") { _ = loadDirectory(dst2.appendingPathComponent("万个文件"), hidden: false) }
+        t("移到废纸篓 1 万文件的文件夹") { trashed += FileOps.trash([dst2.appendingPathComponent("万个文件")]).done.map { $0.1 } }
+        let files = (0..<10000).map { folder.appendingPathComponent("f\($0).txt") }
+        t("拷贝 1 万个文件（逐项）") { _ = FileOps.transfer(files, to: dst, mode: .copy) }
+        t("移动 1 万个文件（逐项）") { _ = FileOps.transfer((0..<10000).map { dst.appendingPathComponent("f\($0).txt") }, to: dst2, mode: .move) }
+        t("移到废纸篓 1 万个文件（逐项）") { trashed += FileOps.trash((0..<10000).map { dst2.appendingPathComponent("f\($0).txt") }).done.map { $0.1 } }
+        for u in trashed { try? fm.removeItem(at: u) }
+        try? fm.removeItem(at: root)
+        print("OPBENCH 已清理 \(trashed.count) 个废纸篓项目")
+        return 0
+    }
+}

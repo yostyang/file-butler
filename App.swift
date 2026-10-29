@@ -17,6 +17,7 @@ struct FileButlerApp: App {
         let args = CommandLine.arguments
         if args.contains("--selftest") { exit(SelfTest.run()) }
         TestEnv.setup(args)
+        if args.contains("--opbench") { exit(OpBench.run()) }
         if let i = args.firstIndex(of: "--bench") { exit(Bench.run(URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "/tmp/fb-perf"))) }
         ThumbCache.start()
     }
