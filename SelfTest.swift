@@ -205,6 +205,9 @@ enum SelfTest {
         let sorted = sortItems(items, key: .name, asc: true).map { $0.name }
         check("按名称排序", sorted == sorted.sorted { $0.localizedStandardCompare($1) == .orderedAscending } && sortItems(items, key: .name, asc: false).map { $0.name } == sorted.reversed(), sorted.joined(separator: " | "))
 
+        // v0.6：批量重命名、文件架、命令面板
+        v06(root: root, report: check)
+
         // clean up: our own test artifacts only
         for u in trashLeftovers where u.path.contains("/.Trash/") { try? fm.removeItem(at: u) }
         try? fm.removeItem(at: root)

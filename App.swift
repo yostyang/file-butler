@@ -45,6 +45,7 @@ struct FileButlerApp: App {
                 Button("打开所选") { app.activeController.openSelection() }.keyboardShortcut(.downArrow)
                 Button("快速查看") { app.activeController.quickLook() }.keyboardShortcut("y")
                 Button("重命名…") { app.activeController.renameSelection() }
+                Button("批量重命名…") { app.beginBatchRename(app.activeTab.selectedURLs) }
                 Button("复制") { app.duplicate(app.activeTab.selectedURLs) }
                 Button("制作替身") { app.makeAlias(app.activeTab.selectedURLs) }.keyboardShortcut("a", modifiers: [.command, .control])
                 Button("压缩") { app.zip(app.activeTab.selectedURLs) }
@@ -55,8 +56,15 @@ struct FileButlerApp: App {
                 Divider()
                 Button("空间分析") { app.sizeReq = SizeReq(url: app.activeTab.path) }.keyboardShortcut("s", modifiers: [.command, .option])
                 Button("把当前文件夹加入书签") { app.addBookmark() }.keyboardShortcut("b", modifiers: [.command, .shift])
+                Divider()
+                Button("加入文件架") { app.addToShelf(app.activeTab.selectedURLs) }
+                Button("显示 / 隐藏文件架") { app.shelf.visible.toggle() }
+                Button("文件架：拷贝到当前文件夹") { app.shelfTransfer(move: false) }
+                Button("文件架：移动到当前文件夹") { app.shelfTransfer(move: true) }
             }
             CommandMenu("前往") {
+                Button("命令面板…") { app.togglePalette() }.keyboardShortcut("k")
+                Divider()
                 Button("后退") { app.activeTab.goBack() }.keyboardShortcut("[")
                 Button("前进") { app.activeTab.goForward() }.keyboardShortcut("]")
                 Button("上级文件夹") { app.activeTab.goUp() }.keyboardShortcut(.upArrow)

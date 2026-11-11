@@ -14,12 +14,15 @@ struct ContentView: View {
                     if app.dual { PaneView(pane: app.panes[1], index: 1) }
                     if app.showPreview { PreviewPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480) }
                 }
+                ShelfContainer(shelf: app.shelf)
                 Divider()
                 StatusBar()
             }
             .toolbar { toolbar }
         }
+        .overlay { PaletteOverlay(p: app.palette) }
         .navigationTitle(app.activeTab.title)
+        .sheet(item: $app.batchRename, onDismiss: { app.focusActiveTable() }) { m in BatchRenameSheet(m: m).environmentObject(app) }
         .sheet(isPresented: $app.showFDA) { FDASheet() }
         .sheet(isPresented: $app.showViewOptions) { ViewOptionsSheet().environmentObject(app) }
         .onAppear { RightClick.install(app) }
@@ -535,6 +538,7 @@ struct StatusContent: View {
                 Image(systemName: "photo").font(.system(size: 13))
             }
             if let f = tab.freeBytes { Text("可用空间 \(fmtBytes(f))") }
+            ShelfStatusButton(shelf: app.shelf)
         }
         .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24)
     }

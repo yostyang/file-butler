@@ -160,7 +160,7 @@ func freeSpace(_ u: URL) -> Int64? {
 }
 
 struct FBError: LocalizedError { let msg: String; init(_ m: String) { msg = m }; var errorDescription: String? { msg } }
-indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL, URL)]), created([URL]), group([UndoOp]) }
+indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL, URL)]), created([URL]), group([UndoOp]), renamedBatch([(URL, URL)]) }
 
 // MARK: - Pure file operations (also used by --selftest)
 enum FileOps {
@@ -244,6 +244,7 @@ enum FileOps {
         switch op {
         case .rename(let a, let b): try fm.moveItem(at: b, to: a)
         case .moved(let pairs): for (a, b) in pairs.reversed() { try fm.moveItem(at: b, to: a) }
+        case .renamedBatch(let pairs): try BatchRename.undo(pairs)   // 整批一次改回（两步改名，互换名称也安全）
         case .trashed(let pairs): for (a, b) in pairs { try fm.moveItem(at: b, to: a) }
         case .group(let ops):
             var out: [URL] = []
@@ -571,6 +572,12 @@ final class AppState: ObservableObject {
     @Published var renameReq: RenameReq?
     @Published var sizeReq: SizeReq?
     @Published var editingPane: Int?
+    /// v0.6：批量重命名窗口、命令面板、文件架
+    @Published var batchRename: BatchRenameModel?
+    let palette = PaletteModel()
+    let shelf = ShelfModel()
+    /// 最近一次批量重命名的结果（测试用）
+    var lastBatchRename: [(URL, URL)] = []
     /// 进度文字单独放在一个对象里：只刷新状态栏，不让整个窗口每 150ms 重绘一次
     let status = OpStatus()
     var busyText: String? { get { status.text } set { if status.text != newValue { status.text = newValue } } }
@@ -618,6 +625,7 @@ final class AppState: ObservableObject {
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
             nc.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in self?.refreshVolumes() }
         }
+        palette.app = self
     }
 
     var activeTab: TabModel { panes[active].tab }
@@ -875,7 +883,7 @@ final class AppState: ObservableObject {
             t.recompute()
         }
     }
-    func transfer(_ urls: [URL], to dir: URL, mode: TransferMode) {
+    func transfer(_ urls: [URL], to dir: URL, mode: TransferMode, done: ((TransferResult) -> Void)? = nil) {
         guard !urls.isEmpty else { return }
         let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count, kind: (mode == .move || (mode == .auto && sameVolume(urls[0], dir))) ? .move : .copy, first: urls[0].lastPathComponent, dest: dir.lastPathComponent)
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
@@ -893,6 +901,7 @@ final class AppState: ObservableObject {
                 for p in self.panes { for t in p.tabs where t.path.path == dir.standardizedFileURL.path && !landed.isEmpty { t.selection = landed } }
                 self.reload(dirs: [dir] + srcDirs)
                 if !r.errs.isEmpty { self.showError("部分操作未完成", r.errs.joined(separator: "\n")) }
+                done?(r)
             }
         }
     }
@@ -974,6 +983,51 @@ final class AppState: ObservableObject {
             }
         }
     }
+    /// 撤销移动 / 改名后，文件架指回原来的位置
+    func shelfFollowUndo(_ op: UndoOp) {
+        switch op {
+        case .moved(let pairs), .renamedBatch(let pairs), .trashed(let pairs): shelf.relocate(pairs.map { ($0.1, $0.0) })
+        case .rename(let a, let b): shelf.relocate([(b, a)])
+        case .group(let ops): ops.reversed().forEach(shelfFollowUndo)
+        case .created: break
+        }
+    }
+    // MARK: v0.6 批量重命名
+    func beginBatchRename(_ urls: [URL]) {
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        palette.close(refocus: false)
+        batchRename = BatchRenameModel(urls: urls)
+    }
+    /// 在后台按预览执行改名（界面不卡）；成功后整批作为一步放进撤销（⌘Z 一次改回）
+    func applyBatchRename(_ rows: [RenameRow], done: ((Bool) -> Void)? = nil) {
+        let ok = rows.filter { $0.status == .ok }
+        guard !ok.isEmpty, !rows.contains(where: { $0.status.isBlocking }) else { NSSound.beep(); done?(false); return }
+        resetDisplayNames()
+        let p = beginOp("重命名", count: ok.count, first: ok[0].old)
+        opQueue.async {
+            p.markRunning()
+            let res = Result { try BatchRename.apply(rows, progress: p) }
+            DispatchQueue.main.async {
+                self.endOp(p); resetDisplayNames()
+                switch res {
+                case .success(let pairs):
+                    if !pairs.isEmpty { self.undoStack.append(.renamedBatch(pairs)) }
+                    self.lastBatchRename = pairs
+                    // 选中项跟着新名字走（来源 URL 就取自列表，路径形式一致，不必逐个 realpath）
+                    let map = Dictionary(pairs.map { ($0.0.standardizedFileURL.path, $0.1.standardizedFileURL) }, uniquingKeysWith: { a, _ in a })
+                    for pn in self.panes { for t in pn.tabs where t.selection.contains(where: { map[$0.standardizedFileURL.path] != nil }) {
+                        t.selection = Set(t.selection.map { map[$0.standardizedFileURL.path] ?? $0 })
+                    } }
+                    self.shelf.relocate(pairs)
+                    self.reload(dirs: Array(Set(pairs.map { $0.0.deletingLastPathComponent() })))
+                    done?(true)
+                case .failure(let e):
+                    self.showError("无法重命名", e.localizedDescription, fda: isPermissionError(e))
+                    self.reloadVisible(); done?(false)
+                }
+            }
+        }
+    }
     func toggleTag(_ tag: String, _ urls: [URL]) {
         guard !urls.isEmpty else { NSSound.beep(); return }
         let allHave = urls.allSatisfy { FileOps.readTags($0).contains(tag) }
@@ -1000,6 +1054,11 @@ final class AppState: ObservableObject {
                 self.lastUndoTrashed = put
                 self.endOp(p)
                 if let e = err { self.showError("无法撤销", e) }
+                if err == nil { self.shelfFollowUndo(op) }
+                if err == nil, case .renamedBatch(let pairs) = op {
+                    let back = Dictionary(pairs.map { ($0.1.standardizedFileURL.path, $0.0.standardizedFileURL) }, uniquingKeysWith: { a, _ in a })
+                    for pn in self.panes { for t in pn.tabs where t.selection.contains(where: { back[$0.standardizedFileURL.path] != nil }) { t.selection = Set(t.selection.map { back[$0.standardizedFileURL.path] ?? $0 }) } }
+                }
                 self.reloadVisible()
             }
         }

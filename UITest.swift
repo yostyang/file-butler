@@ -46,6 +46,7 @@ enum TestEnv {
         // 双栏、按名称升序、不分组、默认列：不受用户自己的设置影响（快照和测试才可重复）
         ud.set(true, forKey: "dual"); ud.set("name", forKey: "sortKey"); ud.set(true, forKey: "sortAsc"); ud.set(false, forKey: "showHidden")
         ud.removeObject(forKey: "listColumns")
+        ud.removeObject(forKey: "shelfItems")   // 文件架从空的开始（测试结束会还原用户的文件架）
         for k in ud.dictionaryRepresentation().keys where k.hasPrefix("listColW_") || k.hasPrefix("groupKey") { ud.removeObject(forKey: k) }
         // 列宽等界面记忆用默认值，保证截图稳定（测试结束会还原）
         for k in ud.dictionaryRepresentation().keys where k.hasPrefix("NSTableView") || k.hasPrefix("NSSplitView") || k.hasPrefix("NSWindow Frame") { ud.removeObject(forKey: k) }
@@ -524,6 +525,7 @@ final class UITestRunner {
         check("右栏路径栏反映右栏（文件夹A）", p1.hasSuffix("文件夹A"), p1)
         shot("ui-final")
         await regressionTests()
+        await v06Tests()
         await darkSnapshots()
         writeChecklist()
     }

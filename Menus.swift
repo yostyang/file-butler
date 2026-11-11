@@ -85,7 +85,9 @@ func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL], bgDir: UR
     m.append(.item("移到废纸篓", nil, false, true) { app.trash(urls) })
     m.append(.sep)
     m.append(.item("显示简介", nil, false, true) { app.active = pane; app.showPreview = true })
-    m.append(.item("重新命名", nil, false, one) { app.active = pane; app.beginRename(urls[0]) })
+    // 访达：选中多个项目时是「重新命名 N 个项目…」（批量重命名）
+    if one { m.append(.item("重新命名", nil, false, true) { app.active = pane; app.beginRename(urls[0]) }) }
+    else { m.append(.item("重新命名 \(urls.count) 个项目…", nil, false, true) { app.active = pane; app.beginBatchRename(urls) }) }
     m.append(.item(one ? "压缩“\(urls[0].lastPathComponent)”" : "压缩 \(urls.count) 个项目", nil, false, true) { app.zip(urls) })
     m.append(.item("复制", nil, false, true) { app.duplicate(urls) })
     m.append(.item("制作替身", nil, false, true) { app.makeAlias(urls) })
@@ -102,6 +104,7 @@ func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL], bgDir: UR
         .item("剪切", sym("scissors"), false, true) { app.copyToClipboard(urls, cut: true) },
         .item("拷贝路径", sym("link"), false, true) { copyPaths(urls) },
         .item("在访达中显示", sym("magnifyingglass"), false, true) { NSWorkspace.shared.activateFileViewerSelecting(urls) },
+        .item("加入文件架", sym("tray.and.arrow.down"), false, true) { app.addToShelf(urls) },
     ]
     if urls.count >= 1 { extra.append(.item("用所选项目新建文件夹", sym("folder.badge.plus"), false, true) { app.active = pane; app.newFolderWithItems(urls) }) }
     if app.dual {
@@ -271,6 +274,8 @@ enum RightClick {
                 }
                 return e
             default:
+                // 命令面板打开时：右键 / 点按交给面板本身，不弹出底下文件栏的菜单
+                if a.palette.visible { return e }
                 guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
                 PaneFocus.follow(e, app: a)
                 return contextMenu(e, app: a) ? nil : e
