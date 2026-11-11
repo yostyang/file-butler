@@ -126,7 +126,9 @@ struct ShelfDrop: DropDelegate {
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .copy) }
     func performDrop(info: DropInfo) -> Bool {
         targeted.wrappedValue = false
-        app.addProvidersToShelf(info.itemProviders(for: [.fileURL]))
+        // 多选拖进来时 itemProviders 只有第一个项目：先读拖动剪贴板里的全部文件
+        let urls = fileURLs(NSPasteboard(name: .drag))
+        if !urls.isEmpty { app.shelf.add(urls); app.shelf.visible = true } else { app.addProvidersToShelf(info.itemProviders(for: [.fileURL])) }
         return true
     }
 }

@@ -56,7 +56,7 @@ struct ThumbView: View {
     let item: FileItem; let size: CGFloat
     @State var img: NSImage?
     @State var req: QLThumbnailGenerator.Request?
-    var bucket: Int { size <= 64 ? 64 : size <= 128 ? 128 : 256 }
+    var bucket: Int { size <= 64 ? 64 : size <= 128 ? 128 : size <= 256 ? 256 : 512 }
     var body: some View {
         Image(nsImage: img ?? ThumbCache.listIcon(item)).resizable().aspectRatio(contentMode: .fit)
             // 文档缩略图多是白底，加一圈细阴影，像访达一样能看出纸张的边界
@@ -164,7 +164,6 @@ struct IconGrid: View {
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
         .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: order); app.focusPane(index) })
-        .onDrag { NSItemProvider(object: it.url as NSURL) }
         .modifier(FolderDrop(app: app, item: it))
         .help(it.name)
     }
@@ -187,7 +186,15 @@ struct FinderDrop: DropDelegate {
     }
     func performDrop(info: DropInfo) -> Bool {
         targeted?.wrappedValue = false
-        return app.dropProviders(info.itemProviders(for: [.fileURL]), to: dir)
+        return FinderDrop.perform(app: app, dir: dir, pasteboard: NSPasteboard(name: .drag), providers: info.itemProviders(for: [.fileURL]))
+    }
+    /// 放下：先读拖动剪贴板里的全部文件。SwiftUI 的 DropInfo.itemProviders 在多选拖动（例如从列表视图拖 11 个文件）时
+    /// 只给出第一个项目，以前因此只移动了一个文件。剪贴板里没有文件网址时才退回到 itemProviders。
+    @discardableResult
+    static func perform(app: AppState, dir: URL, pasteboard pb: NSPasteboard, providers: [NSItemProvider]) -> Bool {
+        let urls = fileURLs(pb)
+        if !urls.isEmpty { return app.performDrop(urls, to: dir) }
+        return app.dropProviders(providers, to: dir)
     }
 }
 struct FolderDrop: ViewModifier {
@@ -204,11 +211,19 @@ struct FolderDrop: ViewModifier {
 // MARK: column view
 final class ColumnLoader: ObservableObject {
     @Published var lists: [String: [FileItem]] = [:]
+    private var waiters: [String: [([FileItem]) -> Void]] = [:]
     func load(_ u: URL, hidden: Bool, sortKey: SortKey, asc: Bool) {
         DispatchQueue.global(qos: .userInitiated).async {
             let items = sortItems(loadDirectory(u, hidden: hidden).items, key: sortKey, asc: asc)
-            DispatchQueue.main.async { self.lists[u.path] = items }
+            DispatchQueue.main.async {
+                self.lists[u.path] = items
+                if let w = self.waiters.removeValue(forKey: u.path) { w.forEach { $0(items) } }
+            }
         }
+    }
+    /// 这一栏读完时回调一次（→ 键进入还没读完的文件夹时用）
+    func whenLoaded(_ u: URL, _ f: @escaping ([FileItem]) -> Void) {
+        if let l = lists[u.path] { f(l) } else { waiters[u.path, default: []].append(f) }
     }
 }
 struct ColumnBrowser: View {
@@ -223,35 +238,38 @@ struct ColumnBrowser: View {
     }
     var body: some View {
         GeometryReader { geo in
+        let preview = previewItem
+        let L = ColumnLayout(paneWidth: geo.size.width, columns: columns.count, preview: preview != nil)
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     ForEach(Array(columns.enumerated()), id: \.offset) { i, dir in
-                        column(i, dir, height: geo.size.height).frame(width: 230).id("col\(i)")
+                        // 每栏固定 230 点宽，层级再深也不压缩（访达行为：横向滚动）
+                        column(i, dir, height: geo.size.height).frame(width: ColumnLayout.columnWidth).fixedSize(horizontal: true, vertical: false).id("col\(i)")
                         Divider()
                     }
-                    if let p = previewItem {
-                        VStack(spacing: 8) {
-                            PreviewSurface(url: p.url).frame(minHeight: 220)
-                            Text(p.name).font(.headline).lineLimit(2).multilineTextAlignment(.center)
-                            Text("\(p.kind) · \(fmtBytes(p.size))").font(.caption).foregroundStyle(.secondary)
-                            Text("修改于 \(fmtDate(p.modified))").font(.caption).foregroundStyle(.secondary)
-                        }.padding(12).frame(width: 320).id("preview")
+                    if let p = preview {
+                        ColumnPreview(item: p).frame(width: L.previewWidth, height: geo.size.height).id("preview")
                     }
-                    // 最后一栏右侧的空白：右键作用于最深的那个文件夹
-                    Color.clear.frame(width: max(40, geo.size.width - CGFloat(columns.count) * 231 - (previewItem != nil ? 320 : 0)), height: geo.size.height)
+                    // 最后一栏右侧的空白：右键、放下都作用于最深的那个文件夹
+                    Color.clear.frame(width: L.filler, height: geo.size.height)
                         .contentShape(Rectangle())
                         .onTapGesture { app.focusPane(index); deselect(in: columns.count - 1) }
                         .background(ItemMarkerView(url: columns.last ?? tab.path, tab: tab, bg: true))
+                        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: columns.last ?? tab.path))
                 }
-                .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
+                // 内容宽度明确给出：栏数 × 231 + 预览栏 + 右侧空白，任何情况下都不会被挤压
+                .frame(width: L.total, height: geo.size.height, alignment: .leading)
             }
+            // 底部横向滚动条（跟随系统设置：自动隐藏 / 始终显示）
+            .scrollIndicators(.visible, axes: .horizontal)
+            .onAppear { DispatchQueue.main.async { proxy.scrollTo(preview != nil ? "preview" : "col\(columns.count - 1)", anchor: .trailing) } }
             .onChange(of: tab.columnChain) { _ in withAnimation { proxy.scrollTo(previewItem != nil ? "preview" : "col\(columns.count - 1)", anchor: .trailing) } }
             .onChange(of: tab.selection) { _ in if previewItem != nil { withAnimation { proxy.scrollTo("preview", anchor: .trailing) } } }
         }
         }
         .background(KeyCatcher(app: app, pane: index))
-        .onAppear { for c in tab.columnChain { loader.load(c, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) } }
+        .onAppear { tab.columnLoader = loader; for c in tab.columnChain { loader.load(c, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) } }
         .onChange(of: tab.version) { _ in for c in tab.columnChain { loader.load(c, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) } }
     }
     /// 点按某一栏的空白：取消选中这一栏里的项目（访达行为），保留左边栏的路径。
@@ -262,7 +280,7 @@ struct ColumnBrowser: View {
     func column(_ i: Int, _ dir: URL, height: CGFloat) -> some View {
         let items = i == 0 ? tab.items : (loader.lists[dir.path] ?? [])
         let chosen: URL? = i < tab.columnChain.count ? tab.columnChain[i] : nil
-        return ScrollView {
+        return ScrollViewReader { vp in ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(items, id: \.url) { it in
                     let sel = tab.selection.contains(it.url) || chosen == it.url
@@ -283,7 +301,6 @@ struct ColumnBrowser: View {
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                     .simultaneousGesture(TapGesture().onEnded { select(it, at: i, items: items) })
-                    .onDrag { NSItemProvider(object: it.url as NSURL) }
                     .modifier(FolderDrop(app: app, item: it))
                 }
             }.padding(4)
@@ -291,6 +308,9 @@ struct ColumnBrowser: View {
             .contentShape(Rectangle())
             .onTapGesture { app.focusPane(index); deselect(in: i) }
             .background(ItemMarkerView(url: dir, tab: tab, bg: true))
+        }
+        // 用键盘移动选择时，让选中的行保持可见
+        .onChange(of: tab.anchor) { a in if let a = a, items.contains(where: { $0.url == a }) { vp.scrollTo(a) } }
         }
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: dir))
@@ -302,6 +322,46 @@ struct ColumnBrowser: View {
         tab.columnChain = Array(tab.columnChain.prefix(i))
         if it.isFolderLike { tab.columnChain.append(it.url); loader.load(it.url, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) }
         tab.selection = [it.url]; tab.anchor = it.url
+    }
+}
+
+/// 分栏视图的宽度计算（纯函数，自检里验证）
+struct ColumnLayout {
+    static let columnWidth: CGFloat = 230
+    let paneWidth: CGFloat, columns: Int, preview: Bool
+    var columnsWidth: CGFloat { CGFloat(columns) * (ColumnLayout.columnWidth + 1) }
+    /// 预览栏：占用剩下的宽度，最少 300、最多 600
+    var previewWidth: CGFloat { preview ? max(300, min(600, paneWidth - columnsWidth - 40)) : 0 }
+    var filler: CGFloat { max(40, paneWidth - columnsWidth - previewWidth) }
+    var total: CGFloat { columnsWidth + previewWidth + filler }
+}
+/// 分栏视图最右边的预览栏（访达）：缩略图在可用空间里居中、按比例缩放，下面是名称、种类、大小、修改日期。
+/// 影片 / 音频仍用不自动播放的媒体预览。
+struct ColumnPreview: View {
+    let item: FileItem
+    static var lastLayout: (column: CGRect, image: CGRect)?   // 界面测试读取
+    var body: some View {
+        GeometryReader { g in
+            let side = max(64, min(g.size.width - 32, g.size.height - 130))
+            VStack(spacing: 6) {
+                Spacer(minLength: 8)
+                Group {
+                    if isAVMedia(item.url) { PreviewSurface(url: item.url).frame(width: g.size.width - 32, height: side) }
+                    else { ThumbView(item: item, size: side).frame(width: side, height: side) }
+                }
+                .background(GeometryReader { ig in Color.clear.onAppear { record(g, ig) }.onChange(of: ig.size) { _ in record(g, ig) } })
+                Text(item.name).font(.system(size: 13, weight: .semibold)).lineLimit(2).multilineTextAlignment(.center).padding(.top, 6)
+                Text("\(item.kind) · \(fmtBytes(item.size))").font(.caption).foregroundStyle(.secondary)
+                Text("修改于 \(fmtDate(item.modified))").font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 16)
+            .frame(width: g.size.width, height: g.size.height)
+        }
+    }
+    func record(_ g: GeometryProxy, _ ig: GeometryProxy) {
+        guard TestEnv.active else { return }
+        ColumnPreview.lastLayout = (g.frame(in: .global), ig.frame(in: .global))
     }
 }
 
@@ -338,7 +398,6 @@ struct GalleryView: View {
                                 .contentShape(Rectangle())
                                 .gesture(TapGesture(count: 2).onEnded { app.open(it, in: tab) })
                                 .simultaneousGesture(TapGesture().onEnded { tab.click(it.url, order: tab.display.map { $0.url }); app.focusPane(index) })
-                                .onDrag { NSItemProvider(object: it.url as NSURL) }
                                 .modifier(FolderDrop(app: app, item: it))
                                 .help(it.name).id(it.url)
                         }

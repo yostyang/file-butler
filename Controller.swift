@@ -55,12 +55,18 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         case 49: quickLook(); return true
         case 36, 76: if f.contains(.command) { openSelection() } else { renameSelection() }; return true
         case 48: app.switchPane(); return true
-        case 53: if tab.searchActive { tab.clearSearch(); return true }; return false
+        case 53:
+            if FolderPeek.shared.isVisible { FolderPeek.shared.close(); return true }
+            if tab.searchActive { tab.clearSearch(); return true }; return false
         case 51, 117: if f.contains(.command) { app.trash(tab.selectedURLs); return true }; return false
         case 125: if f.contains(.command) { openSelection(); return true }
         case 126: if f.contains(.command) { tab.goUp(); return true }
         default: break
         }
+        // 分栏视图：↑↓ 在当前栏内移动，→ 进入文件夹（下一栏），← 回到上一栏（访达）
+        if tab.viewMode == .column, !tab.isGlobalSearch, f.subtracting(.shift).isEmpty, columnKey(e, extend: f.contains(.shift)) { return true }
+        // 键入名称选择（列表视图用 NSTableView 自带的）
+        if tab.viewMode != .list, f.subtracting(.shift).isEmpty, typeSelect(e) { return true }
         guard !isTable, f.subtracting(.shift).isEmpty, tab.viewMode != .column else { return false }
         let ext = f.contains(.shift)
         let cols = tab.viewMode == .gallery ? 1 : max(1, iconColumns)
@@ -96,8 +102,87 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
     /// 粘贴目标：当前文件夹（分栏视图里是最右侧打开的文件夹）
     var pasteDir: URL { tab.viewMode == .column && !tab.isGlobalSearch ? (tab.columnChain.last ?? tab.path) : tab.path }
 
+    // MARK: column view keyboard
+    var columnDirs: [URL] { [tab.path] + tab.columnChain }
+    func columnItems(_ k: Int) -> [FileItem] {
+        let dirs = columnDirs
+        guard k >= 0, k < dirs.count else { return [] }
+        return k == 0 ? tab.items : (tab.columnLoader?.lists[dirs[k].path] ?? [])
+    }
+    /// 当前选择（锚点）所在的栏；没有选择时是最右边那一栏
+    func focusedColumn() -> Int {
+        let dirs = columnDirs
+        if let a = tab.anchor ?? tab.selectedURLs.last, let k = dirs.firstIndex(where: { $0.standardizedFileURL.path == a.deletingLastPathComponent().standardizedFileURL.path }) { return k }
+        return dirs.count - 1
+    }
+    /// 和点按某一栏里的项目一样：截断右边的栏；选中文件夹时打开它的下一栏
+    func columnSelect(_ u: URL, at k: Int) {
+        tab.columnChain = Array(tab.columnChain.prefix(k))
+        let it = columnItems(k).first { $0.url == u } ?? makeItem(u)
+        if it.isFolderLike { tab.columnChain.append(u); tab.columnLoader?.load(u, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) }
+        tab.selection = [u]; tab.anchor = u
+    }
+    func columnKey(_ e: NSEvent, extend: Bool) -> Bool {
+        let k = focusedColumn(), items = columnItems(k)
+        let cur = (tab.anchor ?? tab.selectedURLs.last).flatMap { a in items.firstIndex { $0.url == a } }
+        switch e.keyCode {
+        case 125, 126:
+            guard !items.isEmpty else { return true }
+            let d = e.keyCode == 125 ? 1 : -1
+            let n = cur.map { max(0, min(items.count - 1, $0 + d)) } ?? (d > 0 ? 0 : items.count - 1)
+            let u = items[n].url
+            if extend { tab.selection.insert(u); tab.anchor = u } else { columnSelect(u, at: k) }
+            return true
+        case 124:
+            guard let c = cur, items[c].isFolderLike else { return true }
+            if tab.columnChain.count <= k || tab.columnChain[k] != items[c].url { columnSelect(items[c].url, at: k) }
+            let next = columnItems(k + 1)
+            if let f = next.first { columnSelect(f.url, at: k + 1) }
+            else if tab.columnLoader?.lists[items[c].url.path] == nil {
+                // 下一栏还没读完：读完后再选中第一项（一次性回调，不轮询）
+                let u = items[c].url
+                tab.columnLoader?.whenLoaded(u) { [weak self] list in
+                    guard let self = self, self.tab.anchor == u, let f = list.first else { return }
+                    self.columnSelect(f.url, at: k + 1)
+                }
+            }
+            return true
+        case 123:
+            guard k > 0 else { return true }
+            let parent = columnDirs[k]
+            tab.columnChain = Array(tab.columnChain.prefix(k))
+            tab.selection = [parent]; tab.anchor = parent
+            return true
+        default: return false
+        }
+    }
+    // MARK: type to select（分栏 / 图标 / 画廊视图）
+    var typeBuf = "", typeAt: TimeInterval = 0
+    func typeSelect(_ e: NSEvent) -> Bool {
+        guard let ch = e.characters, !ch.isEmpty, e.keyCode != 49,
+              ch.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(.punctuationCharacters).union(.symbols).contains($0) }) else { return false }
+        if e.timestamp - typeAt > 1.0 { typeBuf = "" }
+        typeAt = e.timestamp; typeBuf += ch.lowercased()
+        let col = tab.viewMode == .column && !tab.isGlobalSearch
+        let k = col ? focusedColumn() : 0
+        let names: [(URL, String)] = col ? columnItems(k).map { ($0.url, $0.name) } : tab.display.map { ($0.url, $0.name) }
+        let order = col ? names.map { $0.0 } : visualOrder()
+        let byURL = Dictionary(names.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+        guard let hit = order.first(where: { (byURL[$0] ?? "").lowercased().hasPrefix(typeBuf) }) else { return true }
+        if col { columnSelect(hit, at: k) } else { tab.selection = [hit]; tab.anchor = hit }
+        return true
+    }
+
     // MARK: Quick Look
     func quickLook(_ urls: [URL]? = nil) {
+        // 文件夹（包括空文件夹）：显示文件夹的快速查看（图标、名称、项目数、修改时间、空间分析按钮）
+        if urls == nil, FolderPeek.shared.isVisible { FolderPeek.shared.close(); return }
+        let target = urls ?? tab.selectedURLs
+        if target.count == 1, makeItem(target[0]).isFolderLike {
+            if !TestEnv.active, QLPreviewPanel.sharedPreviewPanelExists(), let p = QLPreviewPanel.shared(), p.isVisible { p.orderOut(nil) }
+            FolderPeek.shared.show(target[0], app: app); return
+        }
+        if FolderPeek.shared.isVisible { FolderPeek.shared.close() }
         if TestEnv.active { if urls == nil && !qlURLs.isEmpty && qlOpen { qlOpen = false; return }; qlURLs = urls ?? tab.selectedURLs; qlOpen = !qlURLs.isEmpty; return }
         guard let p = QLPreviewPanel.shared() else { return }
         if urls == nil && QLPreviewPanel.sharedPreviewPanelExists() && p.isVisible { p.orderOut(nil); return }
@@ -109,6 +194,12 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         p.makeKeyAndOrderFront(nil); p.reloadData()
     }
     func refreshQL() {
+        if FolderPeek.shared.isVisible, app.active == pane {
+            let s = tab.selectedURLs
+            if s.count == 1, makeItem(s[0]).isFolderLike { if s[0] != FolderPeek.shared.url { FolderPeek.shared.show(s[0], app: app) } }
+            else if !s.isEmpty { FolderPeek.shared.close(); quickLook(s) }
+            return
+        }
         guard QLPreviewPanel.sharedPreviewPanelExists(), let p = QLPreviewPanel.shared(), p.isVisible, (p.dataSource as AnyObject?) === self else { return }
         let s = tab.selectedURLs
         guard !s.isEmpty else { return }

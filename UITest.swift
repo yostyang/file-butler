@@ -273,6 +273,7 @@ final class UITestRunner {
         if ProcessInfo.processInfo.environment["FB_PERFONLY"] != nil { await regressionTests(); writeChecklist(); finish(); return }
         // 调试用：只跑 v0.6 部分（正常 test.sh 不设这个变量，照常跑全部）
         if ProcessInfo.processInfo.environment["FB_V06ONLY"] != nil { await v06Tests(); writeChecklist(); finish(); return }
+        if ProcessInfo.processInfo.environment["FB_V061ONLY"] != nil { await v061Tests(); writeChecklist(); finish(); return }
         await snapshots()
         if TestEnv.mode == "--uitest" { await uiTests() }
         finish()
@@ -528,6 +529,7 @@ final class UITestRunner {
         shot("ui-final")
         await regressionTests()
         await v06Tests()
+        await v061Tests()
         await darkSnapshots()
         writeChecklist()
     }

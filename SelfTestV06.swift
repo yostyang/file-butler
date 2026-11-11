@@ -181,5 +181,22 @@ extension SelfTest {
         pm.open(); let tk = pm.token; pm.setQuery("藏得"); let tk2 = pm.token; pm.close(refocus: false)
         check("命令面板：关闭时取消正在进行的扫描", tk.isCancelled && tk2.isCancelled && !pm.visible && pm.results.isEmpty)
         try? fm.removeItem(at: root.appendingPathComponent("深"))
+
+        // ===== v0.6.1 =====
+        // 最近访问：未装载的外置盘上的记录不显示（只比较字符串，不访问磁盘）
+        let rec = ["/Users/x/文档", "/Volumes/Seed/影片", "/Volumes/YostNano", "/Volumes/Macintosh HD 2/a", "/Volumes"].map { URL(fileURLWithPath: $0) }
+        let vis = recentsOnMountedVolumes(rec, mounted: ["/", "/Volumes/Macintosh HD 2"]).map { $0.path }
+        check("最近访问：隐藏未装载磁盘上的记录（Seed、YostNano），保留启动盘和已装载的盘", vis == ["/Users/x/文档", "/Volumes/Macintosh HD 2/a", "/Volumes"], vis.joined(separator: ", "))
+        // 分栏视图：层级再深每栏也保持 230 点宽，内容宽度超过栏宽时横向滚动
+        let colDeep = ColumnLayout(paneWidth: 640, columns: 7, preview: true)
+        check("分栏视图：7 层 + 预览栏，每栏 230 点、总宽 = 7×231 + 300 + 40", colDeep.total == 7 * 231 + 300 + 40 && colDeep.previewWidth == 300, "总宽 \(Int(colDeep.total))")
+        let wide = ColumnLayout(paneWidth: 1400, columns: 2, preview: true)
+        check("分栏视图：空间充足时预览栏最多 600 点，并填满窗格", wide.previewWidth == 600 && wide.total == 1400, "预览 \(Int(wide.previewWidth))、总宽 \(Int(wide.total))")
+        // 放下：拖动剪贴板里的全部文件都被读出（以前 SwiftUI 只给第一个）
+        let pb = NSPasteboard(name: NSPasteboard.Name("fb-selftest-multidrag")); pb.clearContents()
+        let dragMany = (1...11).map { root.appendingPathComponent("安装包\($0).dmg") }
+        pb.writeObjects(dragMany.map { $0 as NSURL })
+        check("放下：从拖动剪贴板读出全部 11 个文件", fileURLs(pb).count == 11, "\(fileURLs(pb).count) 个")
+        pb.releaseGlobally()
     }
 }

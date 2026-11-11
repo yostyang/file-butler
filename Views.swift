@@ -191,7 +191,11 @@ struct SidebarView: View {
                     Button { app.addBookmark() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("把当前文件夹加入书签")
                 }
             }
-            Section("最近访问") { ForEach(Array(app.recents.prefix(15)), id: \.self) { row($0) } }
+            Section("最近访问") {
+                ForEach(Array(app.visibleRecents.prefix(15)), id: \.self) { u in
+                    row(u).contextMenu { Button("从最近访问中移除") { app.removeRecent(u) } }
+                }
+            }
             Section("标签") {
                 ForEach(app.allTags, id: \.self) { t in
                     Button { app.activeTab.showTag(t); app.objectWillChange.send() } label: {
@@ -490,6 +494,8 @@ struct PathSegmentsView: View {
                                 .resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14)
                             Text(s.label).font(.system(size: 12)).lineLimit(1).fixedSize()
                         }.padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
+                        // 右键：拷贝路径 / 在新标签页中打开 / 在访达中显示（菜单在右键时才构建）
+                        .background(ItemMarkerView(url: s.url, tab: tab, seg: true))
                     }.buttonStyle(.plain).help(s.url.path).onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: s.url))
                 }
             }

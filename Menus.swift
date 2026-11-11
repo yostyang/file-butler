@@ -239,15 +239,76 @@ struct InlineNameField: NSViewRepresentable {
 final class ItemMarker: NSView {
     var url: URL?
     var bg = false
+    /// 路径栏上的一段（右键弹出「拷贝路径」等菜单）
+    var seg = false
     weak var tab: TabModel?
     override func hitTest(_ p: NSPoint) -> NSView? { nil }
 }
 struct ItemMarkerView: NSViewRepresentable {
     let url: URL, tab: TabModel
     var bg = false
-    func makeNSView(context: Context) -> ItemMarker { let v = ItemMarker(); v.url = url; v.tab = tab; v.bg = bg; RightClick.markers.add(v); return v }
-    func updateNSView(_ v: ItemMarker, context: Context) { v.url = url; v.tab = tab; v.bg = bg }
+    var seg = false
+    func makeNSView(context: Context) -> ItemMarker { let v = ItemMarker(); v.url = url; v.tab = tab; v.bg = bg; v.seg = seg; RightClick.markers.add(v); return v }
+    func updateNSView(_ v: ItemMarker, context: Context) { v.url = url; v.tab = tab; v.bg = bg; v.seg = seg }
 }
+
+/// 分栏 / 画廊视图（SwiftUI）里的拖动：SwiftUI 的 .onDrag 每次只能拖一个项目，
+/// 所以多选后拖动只会移动一个文件。这里改为在事件监听里识别「按下 → 移动超过 4 点」，
+/// 用 AppKit 拖动会话把所有选中的项目一起拖出（访达行为：拖未选中的项目只拖它自己）。
+/// 只在按下鼠标后才判断，鼠标悬停不做任何事。
+enum MultiDrag {
+    struct Pending { let url: URL; weak var tab: TabModel?; let at: NSPoint; weak var view: NSView? }
+    static var pending: Pending?
+    static let source = MultiDragSource()
+    /// 鼠标下的 SwiftUI 项目标记（列表 / 图标视图、文本框里不算）
+    static func marker(at p: NSPoint, in w: NSWindow) -> ItemMarker? {
+        guard let root = w.contentView?.superview else { return nil }
+        var h = root.hitTest(root.convert(p, from: root.superview))
+        while let v = h { if v is NSTableView || v is NSCollectionView || v is NSTextView || v is NSControl { return nil }; h = v.superview }
+        return RightClick.markers.allObjects.first { m in
+            m.window === w && !m.bg && !m.seg && m.url != nil && m.tab != nil && !m.isHiddenOrHasHiddenAncestor
+                && !m.visibleRect.isEmpty && m.convert(m.visibleRect, to: nil).contains(p)
+        }
+    }
+    static func down(_ e: NSEvent) {
+        pending = nil
+        guard let w = e.window, let m = marker(at: e.locationInWindow, in: w), let u = m.url else { return }
+        pending = Pending(url: u, tab: m.tab, at: e.locationInWindow, view: m)
+    }
+    /// 返回 true 表示已开始拖动（事件被消费）
+    static func dragged(_ e: NSEvent) -> Bool {
+        guard let p = pending, let v = p.view, let t = p.tab, e.window === v.window else { return false }
+        guard hypot(e.locationInWindow.x - p.at.x, e.locationInWindow.y - p.at.y) > 4 else { return false }
+        pending = nil
+        let urls = urlsToDrag(p.url, tab: t)
+        if !t.selection.contains(p.url) { t.selection = [p.url]; t.anchor = p.url }
+        let local = v.convert(p.at, from: nil)
+        let items = ShelfDragView.draggingItems(urls, from: v)
+        for it in items { var f = it.draggingFrame; f.origin.x += local.x - 16; f.origin.y += local.y - 16; it.draggingFrame = f }
+        v.beginDraggingSession(with: items, event: e, source: source)
+        return true
+    }
+    /// 拖动选中的项目时拖动全部选中项目，否则只拖被按住的那一个
+    static func urlsToDrag(_ u: URL, tab: TabModel) -> [URL] { itemMenuURLs(tab, u) }
+}
+final class MultiDragSource: NSObject, NSDraggingSource {
+    func draggingSession(_ s: NSDraggingSession, sourceOperationMaskFor ctx: NSDraggingContext) -> NSDragOperation { [.copy, .move, .link, .generic] }
+}
+
+/// 路径栏某一段的右键菜单（访达：拷贝路径、在新标签页中打开、在访达中显示）
+func pathSegmentSpec(app: AppState, pane i: Int, url u: URL) -> [MEntry] {
+    let name = u.path == "/" ? (volumeName(u) ?? "/") : u.lastPathComponent
+    return [
+        .item("打开", sym("folder"), false, true) { app.focusPane(i); app.panes[i].tab.navigate(u) },
+        .item("在新标签页中打开", sym("plus.square.on.square"), false, true) { app.focusPane(i); app.newTab(); app.panes[i].tab.navigate(u) },
+        .sep,
+        .item("拷贝路径", sym("doc.on.doc"), false, true) { copyPaths([u]) },
+        .item("拷贝“\(name)”的路径名称", sym("doc.on.clipboard"), false, true) { copyPaths([u]) },
+        .sep,
+        .item("在访达中显示", sym("magnifyingglass"), false, true) { NSWorkspace.shared.activateFileViewerSelecting([u]) },
+    ]
+}
+func volumeName(_ u: URL) -> String? { (try? u.resourceValues(forKeys: [.volumeNameKey]))?.volumeName }
 /// 全局事件监听：
 /// 1. 活动栏跟随鼠标（移动、滚动、按键、右键时，鼠标所在的栏就是活动栏）
 /// 2. 分栏 / 画廊视图的右键菜单：在右键时才构建（AppKit 菜单），不在每次界面刷新时预先计算
@@ -259,21 +320,25 @@ enum RightClick {
     static func install(_ a: AppState? = nil) {
         if let a = a { app = a }
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .mouseMoved, .scrollWheel, .keyDown]) { e in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .mouseMoved, .scrollWheel, .keyDown]) { e in
             guard let a = app else { return e }
             if let w = e.window, !w.acceptsMouseMovedEvents, w.toolbar != nil { w.acceptsMouseMovedEvents = true }
             switch e.type {
             case .mouseMoved, .scrollWheel: PaneFocus.follow(e, app: a); return e
+            case .leftMouseDragged: return MultiDrag.dragged(e) ? nil : e
+            case .leftMouseUp: MultiDrag.pending = nil; return e
             case .keyDown:
                 PaneFocus.follow(e, app: a)
                 // 切换显示方式、关闭重命名框等之后，焦点可能短暂落在窗口本身：快捷键仍然作用于当前栏（访达的快捷键总是有效）
-                if let w = e.window, w.toolbar != nil, w.attachedSheet == nil, w.firstResponder === w || w.firstResponder == nil, a.active < a.controllers.count {
+                if let w = e.window, w.toolbar != nil, w.attachedSheet == nil, a.active < a.controllers.count,
+                   w.firstResponder === w || w.firstResponder == nil || strayResponder(w.firstResponder, mode: a.activeTab.viewMode) {
                     let c = a.controllers[a.active]
                     let handled = e.modifierFlags.contains(.command) ? c.handleKeyEquivalent(e) : c.handleKeyDown(e, isTable: false)
                     if handled { DispatchQueue.main.async { a.focusActiveTable() }; return nil }
                 }
                 return e
             default:
+                if e.type == .leftMouseDown { MultiDrag.pending = nil; if !a.palette.visible, !e.modifierFlags.contains(.control) { MultiDrag.down(e) } }
                 // 命令面板打开时：右键 / 点按交给面板本身，不弹出底下文件栏的菜单
                 if a.palette.visible { return e }
                 guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
@@ -281,6 +346,12 @@ enum RightClick {
                 return contextMenu(e, app: a) ? nil : e
             }
         }
+    }
+    /// 分栏 / 画廊视图（SwiftUI）里，点按后焦点可能落在 SwiftUI 的承载视图上，按键到不了这一栏：
+    /// 这种情况也交给当前栏处理（文本框、列表、图标视图、按钮等自己处理按键的不算）
+    static func strayResponder(_ r: NSResponder?, mode: ViewMode) -> Bool {
+        guard mode == .column || mode == .gallery, let v = r as? NSView else { return false }
+        return !(v is NSText || v is NSTableView || v is NSCollectionView || v is FBKeyView || v is NSControl)
     }
     /// 鼠标下（画廊、分栏等 SwiftUI 视图背后）负责这一栏的 FBKeyView
     static func keyViewUnder(_ root: NSView, _ p: NSPoint) -> FBKeyView? {
@@ -297,11 +368,19 @@ enum RightClick {
         while let v = h { if v is NSTableView || v is NSCollectionView || (v as? NSTextView)?.isFieldEditor == true { return false }; h = v.superview }
         let live = markers.allObjects.filter { $0.window === w && !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: nil).contains(p) }
         func paneOf(_ t: TabModel?) -> Int? { app.panes.firstIndex { $0.tab === t } }
+        func paneOfSeg(_ t: TabModel?) -> Int? { paneOf(t) }
+        if let m = live.first(where: { $0.seg }), let u = m.url, let i = paneOfSeg(m.tab) {
+            let menu = NSMenu(); fillMenu(menu, pathSegmentSpec(app: app, pane: i, url: u), app: app)
+            lastMenu = menu
+            let view = app.responders[i].v ?? root
+            DispatchQueue.main.async { NSMenu.popUpContextMenu(menu, with: e, for: view) }
+            return true
+        }
         var pane: Int?, urls: [URL] = [], bgDir: URL?
-        if let m = live.first(where: { !$0.bg }), let u = m.url, let t = m.tab, let i = paneOf(t) {
+        if let m = live.first(where: { !$0.bg && !$0.seg }), let u = m.url, let t = m.tab, let i = paneOf(t) {
             if !t.selection.contains(u) { t.selection = [u]; t.anchor = u }
             pane = i; urls = itemMenuURLs(t, u)
-        } else if let m = live.first(where: { $0.bg }), let t = m.tab, let i = paneOf(t) {
+        } else if let m = live.first(where: { $0.bg && !$0.seg }), let t = m.tab, let i = paneOf(t) {
             pane = i; bgDir = m.url
         } else if let k = keyViewUnder(root, p) {
             pane = k.pane

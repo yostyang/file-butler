@@ -96,7 +96,7 @@ enum PaletteEngine {
         func put(_ u: URL, _ d: Bool, _ s: String) { let p = u.standardizedFileURL.path; if seen.insert(p).inserted { out.append(FileCand(url: u.standardizedFileURL, isDir: d, source: s)) } }
         let panes = app.dual ? [app.active, 1 - app.active] : [app.active]
         for i in panes { for it in app.panes[i].tab.display.prefix(20000) { put(it.url, it.isFolderLike, i == app.active ? "当前文件夹" : "另一栏") } }
-        for u in app.recents { put(u, true, "最近访问") }
+        for u in app.visibleRecents { put(u, true, "最近访问") }
         for u in app.bookmarks { put(u, true, "书签") }
         for u in app.favorites { put(u, true, "个人收藏") }
         for u in app.shelf.items { var d: ObjCBool = false; FileManager.default.fileExists(atPath: u.path, isDirectory: &d); put(u, d.boolValue, "文件架") }

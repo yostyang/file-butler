@@ -312,6 +312,8 @@ final class TabModel: ObservableObject, Identifiable {
     let chrome = TabChrome()
     @Published var searchResults: [FileItem] = []
     @Published var searching = false
+    /// 分栏视图的各栏内容（键盘导航读取；视图持有，这里弱引用）
+    weak var columnLoader: ColumnLoader?
     @Published var columnChain: [URL] = []
     var back: [URL] = [], fwd: [URL] = []
     var sortKey: SortKey = .name { didSet { chrome.set(\.sortKey, sortKey) } }
@@ -551,6 +553,15 @@ final class PaneModel: ObservableObject {
 struct AlertInfo: Identifiable { let id = UUID(); let title: String; let message: String; var fda = false }
 struct RenameReq: Identifiable { let id = UUID(); let url: URL }
 struct SizeReq: Identifiable { let id = UUID(); let url: URL }
+/// 只保留所在卷已装载的路径（纯字符串比较；/Volumes/<名称> 之外的路径都在启动磁盘上）
+func recentsOnMountedVolumes(_ urls: [URL], mounted: [String]) -> [URL] {
+    let roots = Set(mounted.map { $0.hasSuffix("/") && $0.count > 1 ? String($0.dropLast()) : $0 })
+    return urls.filter { u in
+        let comps = u.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard comps.count >= 2, comps[0] == "Volumes" else { return true }
+        return roots.contains("/Volumes/" + comps[1])
+    }
+}
 struct VolumeInfo: Identifiable { var id: URL { url }; let url: URL; let name: String; let free: Int64; let total: Int64 }
 final class WeakView { weak var v: NSView? }
 
@@ -649,6 +660,13 @@ final class AppState: ObservableObject {
     func visited(_ u: URL) {
         recents.removeAll { $0.path == u.path }; recents.insert(u, at: 0)
         if recents.count > 15 { recents.removeLast(recents.count - 15) }
+        ud.set(recents.map { $0.path }, forKey: "recents"); touch()
+    }
+    /// 侧边栏显示的「最近访问」：所在磁盘没有装载（外置盘拔掉了）的记录先不显示，记录本身保留，
+    /// 磁盘再接上就会重新出现。只比较路径和已装载卷列表，不访问磁盘（不会唤醒休眠的硬盘、不弹窗）。
+    var visibleRecents: [URL] { recentsOnMountedVolumes(recents, mounted: volumes.map { $0.url.path }) }
+    func removeRecent(_ u: URL) {
+        recents.removeAll { $0.path == u.path }
         ud.set(recents.map { $0.path }, forKey: "recents"); touch()
     }
     func noteTags(_ items: [FileItem]) {
