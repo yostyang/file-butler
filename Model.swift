@@ -441,8 +441,10 @@ final class TabModel: ObservableObject, Identifiable {
                 self.items = newItems
                 let dirPath = p.path
                 if !self.selection.isEmpty && !self.selection.isSubset(of: all) {
-                    let keep = self.selection.filter { all.contains($0) || $0.deletingLastPathComponent().path != dirPath }
-                    if keep.count != self.selection.count { self.selection = keep }
+                    // 写法不同的同一文件（/tmp 与 /private/tmp 等，例如「前往」或命令面板选中的文件）按名称对上并换成列表里的写法；真正不在了的才去掉
+                    let map = matchByName(self.selection.filter { !all.contains($0) }, dir: p, display: newItems)
+                    let keep = Set(self.selection.compactMap { u -> URL? in all.contains(u) ? u : (map[u] ?? (u.deletingLastPathComponent().path != dirPath ? u : nil)) })
+                    if keep != self.selection { self.selection = keep; if let a = self.anchor, let b = map[a] { self.anchor = b } }
                 }
                 if self.loading { self.loading = false }
                 self.recompute()
@@ -573,7 +575,9 @@ final class AppState: ObservableObject {
     @Published var sizeReq: SizeReq?
     @Published var editingPane: Int?
     /// v0.6：批量重命名窗口、命令面板、文件架
-    @Published var batchRename: BatchRenameModel?
+    /// 批量重命名：设为一个模型 = 以表单打开，设为 nil = 关闭（AppKit 表单，见 BatchRenamePanel；不是 @Published，打开 / 关闭不让整个窗口重绘）
+    var batchRename: BatchRenameModel? = nil { didSet { if batchRename !== oldValue { showBatchRenamePanel() } } }
+    private var renamePanel: BatchRenamePanel?
     let palette = PaletteModel()
     let shelf = ShelfModel()
     /// 最近一次批量重命名的结果（测试用）
@@ -993,6 +997,38 @@ final class AppState: ObservableObject {
         }
     }
     // MARK: v0.6 批量重命名
+    private func showBatchRenamePanel() {
+        let had = renamePanel != nil
+        renamePanel?.close(); renamePanel = nil
+        let host = responders[active].v?.window ?? TestWindow.win ?? NSApp?.mainWindow
+        if let m = batchRename, let w = host {
+            let p = BatchRenamePanel(m: m, app: self); renamePanel = p; p.present(on: w)
+        } else if had { DispatchQueue.main.async { self.focusActiveTable() } }
+    }
+    /// 改名后让各标签页的选中项跟着新名字（按标准路径找，换成新名称，URL 写法保持不变）
+    /// 选中项本来就取自列表，先直接按 URL 查；写法不同的才按名称筛选后做标准化比较。拼新 URL 时注明是否文件夹，不去查磁盘
+    /// （原来逐个标准化 + appendingPathComponent 查磁盘，1000 项要 45ms）
+    func remapSelection(_ pairs: [(URL, URL)]) {
+        guard !pairs.isEmpty else { return }
+        let direct = Dictionary(pairs.map { ($0.0, $0.1.lastPathComponent) }, uniquingKeysWith: { a, _ in a })
+        var oldNames: Set<String>?, std: [String: String]?
+        func newName(_ u: URL) -> String? {
+            if let n = direct[u] { return n }
+            if oldNames == nil { oldNames = Set(pairs.map { $0.0.lastPathComponent }) }
+            guard oldNames!.contains(u.lastPathComponent) else { return nil }
+            if std == nil { std = Dictionary(pairs.map { ($0.0.standardizedFileURL.path, $0.1.lastPathComponent) }, uniquingKeysWith: { a, _ in a }) }
+            return std![u.standardizedFileURL.path]
+        }
+        for pn in panes { for t in pn.tabs where !t.selection.isEmpty {
+            var changed = false
+            let sel = Set(t.selection.map { u -> URL in
+                guard let n = newName(u) else { return u }
+                changed = true
+                return u.deletingLastPathComponent().appendingPathComponent(n, isDirectory: u.hasDirectoryPath)
+            })
+            if changed { t.selection = sel }
+        } }
+    }
     func beginBatchRename(_ urls: [URL]) {
         guard !urls.isEmpty else { NSSound.beep(); return }
         palette.close(refocus: false)
@@ -1013,11 +1049,8 @@ final class AppState: ObservableObject {
                 case .success(let pairs):
                     if !pairs.isEmpty { self.undoStack.append(.renamedBatch(pairs)) }
                     self.lastBatchRename = pairs
-                    // 选中项跟着新名字走（来源 URL 就取自列表，路径形式一致，不必逐个 realpath）
-                    let map = Dictionary(pairs.map { ($0.0.standardizedFileURL.path, $0.1.standardizedFileURL) }, uniquingKeysWith: { a, _ in a })
-                    for pn in self.panes { for t in pn.tabs where t.selection.contains(where: { map[$0.standardizedFileURL.path] != nil }) {
-                        t.selection = Set(t.selection.map { map[$0.standardizedFileURL.path] ?? $0 })
-                    } }
+                    // 选中项跟着新名字走：只换最后一段名称，保留列表里 URL 原来的写法（/tmp 与 /private/tmp 这类同一位置的两种写法不会对不上）
+                    self.remapSelection(pairs)
                     self.shelf.relocate(pairs)
                     self.reload(dirs: Array(Set(pairs.map { $0.0.deletingLastPathComponent() })))
                     done?(true)
@@ -1055,10 +1088,7 @@ final class AppState: ObservableObject {
                 self.endOp(p)
                 if let e = err { self.showError("无法撤销", e) }
                 if err == nil { self.shelfFollowUndo(op) }
-                if err == nil, case .renamedBatch(let pairs) = op {
-                    let back = Dictionary(pairs.map { ($0.1.standardizedFileURL.path, $0.0.standardizedFileURL) }, uniquingKeysWith: { a, _ in a })
-                    for pn in self.panes { for t in pn.tabs where t.selection.contains(where: { back[$0.standardizedFileURL.path] != nil }) { t.selection = Set(t.selection.map { back[$0.standardizedFileURL.path] ?? $0 }) } }
-                }
+                if err == nil, case .renamedBatch(let pairs) = op { self.remapSelection(pairs.map { ($0.1, $0.0) }) }
                 self.reloadVisible()
             }
         }
@@ -1074,3 +1104,30 @@ extension URL {
     }
 }
 func samePath(_ a: URL?, _ b: URL?) -> Bool { guard let a = a, let b = b else { return false }; return a.standardizedFileURL.path == b.standardizedFileURL.path }
+
+/// 选中项里有和列表写法不同的 URL（/tmp 与 /private/tmp 等同一位置的两种写法）时，按名称在当前文件夹里对上，返回「选中项 → 列表里的 URL」。
+/// 只在有对不上的选中项时才调用：每个不同的上级文件夹做一次 realpath，按名称查一次表。
+func matchByName(_ unmatched: [URL], dir: URL, display: [FileItem]) -> [URL: URL] {
+    guard !unmatched.isEmpty else { return [:] }
+    let d = dir.realFileURL.path
+    var parentOK: [String: Bool] = [:], byName: [String: URL]?, out: [URL: URL] = [:]
+    for u in unmatched {
+        let parent = u.deletingLastPathComponent()
+        let ok: Bool
+        if let c = parentOK[parent.path] { ok = c } else { ok = parent.realFileURL.path == d; parentOK[parent.path] = ok }
+        guard ok else { continue }
+        if byName == nil { byName = Dictionary(display.map { ($0.name, $0.url) }, uniquingKeysWith: { a, _ in a }) }
+        if let v = byName?[u.lastPathComponent] { out[u] = v }
+    }
+    return out
+}
+extension TabModel {
+    /// 把选中项换成列表里的写法（下一轮主线程再改，避免在界面刷新过程中改动；选择已经变了就不动）
+    func adoptSelectionForms(_ map: [URL: URL], expected: Set<URL>) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.selection == expected else { return }
+            self.selection = Set(expected.map { map[$0] ?? $0 })
+            if let a = self.anchor, let b = map[a] { self.anchor = b }
+        }
+    }
+}

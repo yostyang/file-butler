@@ -22,7 +22,6 @@ struct ContentView: View {
         }
         .overlay { PaletteOverlay(p: app.palette) }
         .navigationTitle(app.activeTab.title)
-        .sheet(item: $app.batchRename, onDismiss: { app.focusActiveTable() }) { m in BatchRenameSheet(m: m).environmentObject(app) }
         .sheet(isPresented: $app.showFDA) { FDASheet() }
         .sheet(isPresented: $app.showViewOptions) { ViewOptionsSheet().environmentObject(app) }
         .onAppear { RightClick.install(app) }
@@ -616,3 +615,4 @@ struct FDASheet: View {
         .onReceive(timer) { _ in if !granted { granted = hasFullDiskAccess() } }
     }
 }
+

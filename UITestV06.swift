@@ -20,6 +20,20 @@ extension UITestRunner {
         let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: sh.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
         return sh.performKeyEquivalent(with: e)
     }
+    /// 在列表里选中这些名称的行（和用户点选一样经过表格 → 标签页；不手写 URL，避免 /tmp 与 /private/tmp 两种写法对不上）
+    func tableSelect(_ pane: Int, _ names: [String]) async {
+        // 等表格本身已经显示这些名称（只比行数不够：撤销改名后行数不变、名称还没刷新）
+        await waitUntil(3) {
+            guard self.idle(), let c = self.tableCoord(pane)?.1 else { return false }
+            let rowNames = Set(c.rows.compactMap { r -> String? in if case .item(let it) = r { return it.name }; return nil })
+            return Set(names).isSubset(of: rowNames)
+        }
+        guard let (tv, c) = tableCoord(pane) else { return }
+        var idx = IndexSet()
+        for (i, r) in c.rows.enumerated() { if case .item(let it) = r, names.contains(it.name) { idx.insert(i) } }
+        tv.selectRowIndexes(idx, byExtendingSelection: false)
+        await waitUntil(2) { self.app.panes[pane].tab.selection.count == idx.count }
+    }
     func paletteTitles() -> String { app.palette.results.prefix(5).map { $0.title }.joined(separator: " | ") }
 
     func v06Tests() async {
@@ -107,18 +121,20 @@ extension UITestRunner {
         await go(0, A, .list); app.focusPane(0); await settle(0.3)
 
         // ===== 批量重命名 =====
-        tlSelect(0, [A.appendingPathComponent("照片 1.jpg"), A.appendingPathComponent("照片 2.jpg")]); await settle(0.4)
+        await tableSelect(0, ["照片 1.jpg", "照片 2.jpg"]); await settle(0.4)
         t0 = Date()
         var titles: [String] = []
+        let selDiag = "tab选中 \(tA.selection.count) 表格选中 \(tableCoord(0)?.0.selectedRowIndexes.count ?? -1) 显示 \(tA.display.count)"
         if let pt = rowPoint(0, "照片 1.jpg") { titles = await rightClickMenu(pt, choose: "重新命名 2 个项目…") }
         ms = await waitUntil(3) { self.app.batchRename != nil }
-        check("批量重命名：多选右键 →「重新命名 2 个项目…」打开批量重命名", titles.contains("重新命名 2 个项目…") && app.batchRename?.urls.count == 2, titles.prefix(12).joined(separator: " | "), t0: t0)
+        check("批量重命名：多选右键 →「重新命名 2 个项目…」打开批量重命名", titles.contains("重新命名 2 个项目…") && app.batchRename?.urls.count == 2, selDiag + " ｜ " + titles.prefix(12).joined(separator: " | "), t0: t0)
         if let m = app.batchRename {
             await waitUntil(2) { self.win.attachedSheet != nil }
             check("批量重命名：以窗口附带的表单显示", win.attachedSheet != nil)
             m.rule.find = "照片"; m.rule.replace = "旅行"
             await waitUntil(3) { !m.computing }
             check("批量重命名：实时预览 旧名 → 新名（保留扩展名）", m.rows.map { $0.new } == ["旅行 1.jpg", "旅行 2.jpg"] && m.canApply, m.rows.map { "\($0.old)→\($0.new)" }.joined(separator: ", "))
+            await settle(0.15)
             if let sh = win.attachedSheet, let v = sh.contentView { shot("ui-batch-rename", view: v) }
             m.rule.find = "照片 2"; m.rule.replace = "照片 1"
             await waitUntil(3) { !m.computing }
@@ -145,10 +161,11 @@ extension UITestRunner {
             check("批量重命名：一次 ⌘Z 撤销整批", exists(A.appendingPathComponent("照片 1.jpg")) && exists(A.appendingPathComponent("照片 2.jpg")) && !exists(A.appendingPathComponent("旅行 1.jpg")), "\(ms)ms", t0: t0)
         }
         // 从命令面板打开，Esc 取消 → 不改动
-        tlSelect(0, [A.appendingPathComponent("照片 1.jpg"), A.appendingPathComponent("照片 2.jpg")]); app.focusPane(0); await settle(0.3)
+        await tableSelect(0, ["照片 1.jpg", "照片 2.jpg"]); app.focusPane(0); await settle(0.3)
         ok = await openPalette(); type("批量重命名")
         await waitUntil(2) { p.results.first?.title.hasPrefix("批量重命名") == true }
-        press("\r", 36)
+        let escDiag = "首项=\(p.results.first?.title ?? "-") 选中=\(tA.selection.count)"
+        if p.results.first?.title.hasPrefix("批量重命名") == true { press("\r", 36) } else { press("\u{1b}", 53) }   // 首项不对时不要执行别的命令
         await waitUntil(3) { self.app.batchRename != nil && self.win.attachedSheet != nil }
         let opened = app.batchRename != nil
         app.batchRename?.rule.prefix = "不应生效-"
@@ -156,23 +173,29 @@ extension UITestRunner {
         let escKey = sheetKey("\u{1b}", 53)
         if !escKey { app.batchRename = nil }
         await waitUntil(3) { self.app.batchRename == nil && self.win.attachedSheet == nil }
-        check("批量重命名：从命令面板打开；取消 → 不改动任何文件", ok && opened && app.batchRename == nil && exists(A.appendingPathComponent("照片 1.jpg")) && !names(A).contains { $0.hasPrefix("不应生效") }, "Esc 生效=\(escKey)")
+        check("批量重命名：从命令面板打开；取消 → 不改动任何文件", ok && opened && app.batchRename == nil && exists(A.appendingPathComponent("照片 1.jpg")) && !names(A).contains { $0.hasPrefix("不应生效") }, "Esc 生效=\(escKey) 打开=\(opened) " + escDiag)
         // 性能：1000 项预览 + 执行，主线程最长阻塞
         let P = D.appendingPathComponent("改名批量"); try? fm.createDirectory(at: P, withIntermediateDirectories: true)
         for i in 0..<1000 { fm.createFile(atPath: P.appendingPathComponent(String(format: "原%04d.txt", i)).path, contents: Data("x".utf8)) }
         await go(0, P, .list); await waitUntil { tA.display.count == 1000 }
         app.focusPane(0); await settle(0.3); press("a", 0, .command); await settle(0.3)
         let probe = MainThreadProbe(); probe.start(); t0 = Date()
+        var phase = MainThreadProbe(); phase.start()   // 分段：打开表单 / 预览 / 执行，便于定位阻塞在哪一步
         app.beginBatchRename(tA.selectedURLs)
         if let m = app.batchRename {
+            await waitUntil(3) { self.win.attachedSheet != nil }; await settle(0.1)
+            let openMax = phase.stop().max; phase = MainThreadProbe(); phase.start()
             m.rule.numberMode = .format; m.rule.format = "批"; m.rule.digits = 4
             ms = await waitUntil(10) { !m.computing && m.canApply }
             let previewMs = ms
+            await settle(0.2)
+            let previewMax = phase.stop().max; phase = MainThreadProbe(); phase.start()
             app.applyBatchRename(m.rows); app.batchRename = nil
             ms = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("批 ") } && self.shown(0).allSatisfy { $0.hasPrefix("批 ") } }
+            let applyMax = phase.stop().max
             let pr = probe.stop()
             check("性能：批量重命名 1000 项（预览 + 执行），主线程最长阻塞 < 50ms", pr.max < 50 && names(P).count == 1000 && names(P).allSatisfy { $0.hasPrefix("批 ") },
-                  String(format: "预览 %dms，执行 %dms，主线程最长阻塞 %.1fms", previewMs, ms, pr.max), t0: t0)
+                  String(format: "预览 %dms，执行 %dms，主线程最长阻塞 %.1fms（打开表单 %.1f / 预览 %.1f / 执行+刷新 %.1f）", previewMs, ms, pr.max, openMax, previewMax, applyMax), t0: t0)
             perf["batchRenamePreview"] = Double(previewMs); perf["batchRenameApply"] = Double(ms); perf["batchRenameMaxBlock"] = pr.max
             t0 = Date(); app.undo()
             ms = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("原") } }
@@ -181,7 +204,7 @@ extension UITestRunner {
         await go(0, A, .list); app.focusPane(0); await settle(0.3)
 
         // ===== 文件架 =====
-        tlSelect(0, [A.appendingPathComponent("说明.md")]); await settle(0.3)
+        await tableSelect(0, ["说明.md"]); await settle(0.3)
         t0 = Date()
         titles = []
         if let pt = rowPoint(0, "说明.md") { titles = await rightClickMenu(pt, choose: "加入文件架") }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 // MARK: - v0.6 批量重命名：替换文字、加前缀 / 后缀、按序号编号；改名前预览，冲突和无效名称先拦下；整批一次 ⌘Z 撤销
 
@@ -184,90 +185,202 @@ final class BatchRenameModel: ObservableObject, Identifiable {
     }
 }
 
-struct BatchRenameSheet: View {
-    @ObservedObject var m: BatchRenameModel
-    @EnvironmentObject var app: AppState
-    @Environment(\.dismiss) var dismiss
-    let labelW: CGFloat = 64
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("重新命名 \(m.urls.count) 个项目").font(.headline)
-            HStack {
-                Text("查找").frame(width: labelW, alignment: .trailing)
-                TextField("要替换的文字", text: $m.rule.find).accessibilityIdentifier("br-find")
-                Text("替换为")
-                TextField("新文字（可留空）", text: $m.rule.replace).accessibilityIdentifier("br-replace")
-            }
-            HStack {
-                Spacer().frame(width: labelW)
-                Toggle("区分大小写", isOn: $m.rule.caseSensitive).toggleStyle(.checkbox)
-                Toggle("保留扩展名", isOn: $m.rule.keepExt).toggleStyle(.checkbox)
-            }
-            HStack {
-                Text("前缀").frame(width: labelW, alignment: .trailing)
-                TextField("加在名称前面", text: $m.rule.prefix)
-                Text("后缀")
-                TextField("加在扩展名前面", text: $m.rule.suffix)
-            }
-            HStack {
-                Text("编号").frame(width: labelW, alignment: .trailing)
-                Picker("", selection: $m.rule.numberMode) { ForEach(NumberMode.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
-            }
-            if m.rule.numberMode != .off {
-                HStack(spacing: 8) {
-                    Spacer().frame(width: labelW)
-                    if m.rule.numberMode == .format {
-                        Text("名称"); TextField("例如：旅行", text: $m.rule.format).frame(width: 110)
-                    }
-                    Text("起始"); TextField("", value: $m.rule.start, format: .number).frame(width: 60)
-                    Stepper("位数 \(m.rule.digits)", value: $m.rule.digits, in: 1...6).fixedSize()
-                    Text("分隔"); TextField("", text: $m.rule.separator).frame(width: 40)
-                    Text("例：" + BatchRename.number(0, m.rule)).foregroundStyle(.secondary)
-                }
-            }
-            Divider()
-            HStack {
-                Text("预览").font(.subheadline.weight(.semibold))
-                if m.computing { ProgressView().controlSize(.small) }
-                Spacer()
-                Text("将改名 \(m.changedCount) 项" + (m.blocking.isEmpty ? "" : "，\(m.blocking.count) 项有问题")).font(.caption).foregroundStyle(.secondary)
-            }
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(m.rows.prefix(500)) { r in
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 6) {
-                                Text(r.old).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
-                                Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(.tertiary)
-                                Text(r.new).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
-                                    .foregroundStyle(r.status.isBlocking ? AnyShapeStyle(Color.red) : (r.status == .unchanged ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)))
-                            }.font(.system(size: 12))
-                            if let msg = r.status.message { Text(msg).font(.system(size: 11)).foregroundStyle(.red) }
-                        }
-                    }
-                    if m.rows.count > 500 { Text("（只预览前 500 项，全部 \(m.rows.count) 项都会按同样规则检查和改名）").font(.caption).foregroundStyle(.secondary) }
-                }.padding(8)
-            }
-            .frame(height: 220)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-            if let b = m.blocking.first, let msg = b.status.message {
-                Text("无法重命名：“\(b.old)” — \(msg)").font(.caption).foregroundStyle(.red).lineLimit(2)
-            } else {
-                Text("扩展名默认保留；可以用 ⌘Z 一次撤销整批改名。").font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Spacer()
-                Button("取消") { m.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button("重命名") { commit() }.keyboardShortcut(.defaultAction).disabled(!m.canApply)
-            }
-        }
-        .padding(20).frame(width: 600)
+// MARK: - 表单（AppKit）
+/// 批量重命名表单用 AppKit 搭建：本机实测 SwiftUI 表单每次打开都要阻塞主线程 141–164ms（只放一行文字的 SwiftUI 表单也要 66ms），
+/// 普通 AppKit 表单约 7–14ms。预览列表是只画可见行的表格，没有滚动条。
+final class BatchRenamePanel: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    let m: BatchRenameModel
+    private weak var app: AppState?
+    let window: NSWindow
+    private var sub: AnyCancellable?
+    private let find = NSTextField(), replace = NSTextField(), prefix = NSTextField(), suffix = NSTextField()
+    private let format = NSTextField(), start = NSTextField(), sep = NSTextField()
+    private let caseBox = NSButton(checkboxWithTitle: "区分大小写", target: nil, action: nil)
+    private let extBox = NSButton(checkboxWithTitle: "保留扩展名", target: nil, action: nil)
+    private let mode = NSSegmentedControl(labels: NumberMode.allCases.map { $0.title }, trackingMode: .selectOne, target: nil, action: nil)
+    private let stepper = NSStepper()
+    private let digitsLabel = NSTextField(labelWithString: ""), example = NSTextField(labelWithString: ""), formatLabel = NSTextField(labelWithString: "名称")
+    private let startLabel = NSTextField(labelWithString: "起始"), sepLabel = NSTextField(labelWithString: "分隔")
+    private let count = NSTextField(labelWithString: ""), hint = NSTextField(labelWithString: "")
+    private let table = NSTableView()
+    private let okButton = NSButton(title: "重命名", target: nil, action: nil), cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    private var shown: [RenameRow] = [], footer: String?
+
+    init(m: BatchRenameModel, app: AppState) {
+        self.m = m; self.app = app
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 520), styleMask: [.titled], backing: .buffered, defer: true)
+        super.init()
+        build(); refresh()
+        // 规则 / 预览结果变化后刷新（objectWillChange 在改值之前发出，所以放到下一轮主线程再读）
+        sub = m.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() }
     }
-    func commit() {
-        guard m.canApply else { NSSound.beep(); return }
+    func present(on w: NSWindow) {
+        window.initialFirstResponder = find
+        w.beginSheet(window, completionHandler: nil)
+        window.makeFirstResponder(find)
+    }
+    func close() {
+        sub = nil; m.cancel()
+        if let p = window.sheetParent { p.endSheet(window) } else { window.orderOut(nil) }
+    }
+    @objc func cancelAction(_ s: Any?) { app?.batchRename = nil }
+    @objc func commitAction(_ s: Any?) {
+        guard m.canApply, let app = app else { NSSound.beep(); return }
         let rows = m.rows
-        dismiss()
-        DispatchQueue.main.async { app.batchRename = nil; app.applyBatchRename(rows) }
+        app.batchRename = nil
+        app.applyBatchRename(rows)
+    }
+
+    // MARK: 搭建（固定位置排版，不用自动布局：本机实测自动布局计算尺寸一项就要约 30ms）
+    private func place(_ v: NSView, _ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, in c: NSView) { v.frame = NSRect(x: x, y: y, width: w, height: h); c.addSubview(v) }
+    private func label(_ s: String, right: Bool = false) -> NSTextField { let l = NSTextField(labelWithString: s); if right { l.alignment = .right }; return l }
+    private func setup(_ f: NSTextField, _ ph: String, _ id: String) {
+        f.placeholderString = ph; f.delegate = self; f.setAccessibilityIdentifier(id)
+        f.cell?.isScrollable = true; f.cell?.wraps = false; f.lineBreakMode = .byClipping
+    }
+    private func build() {
+        let W: CGFloat = 600, L: CGFloat = 20, R: CGFloat = 580, lw: CGFloat = 64, fx = L + lw + 8
+        let c = FlippedView(frame: NSRect(x: 0, y: 0, width: W, height: 100))
+        var y: CGFloat = 20
+        let title = NSTextField(labelWithString: "重新命名 \(m.urls.count) 个项目"); title.font = .boldSystemFont(ofSize: 13)
+        place(title, L, y, R - L, 18, in: c); y += 28
+        // 一行「标签 输入框 标签 输入框」，两个输入框等宽
+        func pair(_ l1: String, _ f1: NSTextField, _ l2: String, _ f2: NSTextField) {
+            let a = label(l1, right: true), b = label(l2); b.sizeToFit()
+            let fw = (R - fx - 8 - b.frame.width - 8) / 2
+            place(a, L, y + 3, lw, 17, in: c)
+            place(f1, fx, y, fw, 22, in: c)
+            place(b, fx + fw + 8, y + 3, b.frame.width, 17, in: c)
+            place(f2, R - fw, y, fw, 22, in: c)
+            y += 32
+        }
+        setup(find, "要替换的文字", "br-find"); setup(replace, "新文字（可留空）", "br-replace")
+        pair("查找", find, "替换为", replace)
+        for b in [caseBox, extBox] { b.target = self; b.action = #selector(changed(_:)); b.sizeToFit() }
+        place(caseBox, fx, y, caseBox.frame.width, 18, in: c)
+        place(extBox, fx + caseBox.frame.width + 16, y, extBox.frame.width, 18, in: c); y += 28
+        setup(prefix, "加在名称前面", "br-prefix"); setup(suffix, "加在扩展名前面", "br-suffix")
+        pair("前缀", prefix, "后缀", suffix)
+        place(label("编号", right: true), L, y + 3, lw, 17, in: c)
+        mode.target = self; mode.action = #selector(changed(_:)); mode.sizeToFit()
+        place(mode, fx, y, mode.frame.width, mode.frame.height, in: c); y += 32
+        // 编号细节：名称、起始、位数、分隔、示例
+        stepper.minValue = 1; stepper.maxValue = 6; stepper.increment = 1; stepper.valueWraps = false
+        stepper.target = self; stepper.action = #selector(changed(_:))
+        setup(format, "例如：旅行", "br-format"); setup(start, "", "br-start"); setup(sep, "", "br-sep")
+        var x = fx
+        func lab(_ l: NSTextField, _ w: CGFloat? = nil) { l.sizeToFit(); let ww = w ?? l.frame.width; place(l, x, y + 3, ww, 17, in: c); x += ww + 6 }
+        func fld(_ f: NSView, _ w: CGFloat, _ h: CGFloat = 22, dy: CGFloat = 0) { place(f, x, y + dy, w, h, in: c); x += w + 12 }
+        lab(formatLabel); fld(format, 110)
+        lab(startLabel); fld(start, 60)
+        lab(digitsLabel, 46); fld(stepper, 15, 22)
+        lab(sepLabel); fld(sep, 40)
+        example.textColor = .secondaryLabelColor
+        place(example, x, y + 3, max(40, R - x), 17, in: c); y += 34
+        let line = NSBox(); line.boxType = .separator
+        place(line, L, y, R - L, 1, in: c); y += 10
+        let pv = NSTextField(labelWithString: "预览"); pv.font = .systemFont(ofSize: 12, weight: .semibold); pv.sizeToFit()
+        place(pv, L, y, pv.frame.width, 17, in: c)
+        count.font = .systemFont(ofSize: 11); count.textColor = .secondaryLabelColor; count.alignment = .right
+        place(count, L + 200, y + 1, R - L - 200, 16, in: c); y += 24
+        // 预览列表：只画可见的行；不显示滚动条（触控板 / 滚轮照常滚动）
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("r")); col.width = R - L
+        table.addTableColumn(col); table.headerView = nil; table.dataSource = self; table.delegate = self
+        table.intercellSpacing = NSSize(width: 0, height: 2); table.selectionHighlightStyle = .none
+        table.backgroundColor = .textBackgroundColor; table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.focusRingType = .none; table.refusesFirstResponder = true
+        let sv = NSScrollView(); sv.documentView = table; sv.hasVerticalScroller = false; sv.hasHorizontalScroller = false
+        sv.drawsBackground = true; sv.backgroundColor = .textBackgroundColor; sv.borderType = .lineBorder
+        place(sv, L, y, R - L, 220, in: c); table.frame.size.width = R - L; y += 228
+        hint.font = .systemFont(ofSize: 11); hint.lineBreakMode = .byTruncatingMiddle
+        place(hint, L, y, R - L, 16, in: c); y += 26
+        cancelButton.target = self; cancelButton.action = #selector(cancelAction(_:)); cancelButton.keyEquivalent = "\u{1b}"
+        okButton.target = self; okButton.action = #selector(commitAction(_:)); okButton.keyEquivalent = "\r"
+        for b in [cancelButton, okButton] { b.bezelStyle = .rounded; b.sizeToFit(); b.frame.size.width = max(b.frame.width, 84) }
+        place(okButton, R - okButton.frame.width, y, okButton.frame.width, okButton.frame.height, in: c)
+        place(cancelButton, okButton.frame.minX - 12 - cancelButton.frame.width, y, cancelButton.frame.width, cancelButton.frame.height, in: c)
+        y += okButton.frame.height + 20
+        c.frame.size.height = y
+        window.contentView = c
+        window.setContentSize(c.frame.size)
+    }
+
+    // MARK: 输入 → 规则
+    func controlTextDidChange(_ n: Notification) {
+        guard let f = n.object as? NSTextField else { return }
+        var r = m.rule
+        let s = f.stringValue
+        if f === find { r.find = s } else if f === replace { r.replace = s } else if f === prefix { r.prefix = s } else if f === suffix { r.suffix = s }
+        else if f === format { r.format = s } else if f === sep { r.separator = s }
+        else if f === start { if let v = Int(s.trimmingCharacters(in: .whitespaces)) { r.start = v } }
+        if r != m.rule { m.rule = r }
+    }
+    @objc func changed(_ s: Any?) {
+        var r = m.rule
+        r.caseSensitive = caseBox.state == .on; r.keepExt = extBox.state == .on
+        r.numberMode = NumberMode.allCases[max(0, min(NumberMode.allCases.count - 1, mode.selectedSegment))]
+        r.digits = max(1, min(6, stepper.integerValue))
+        if r != m.rule { m.rule = r }
+    }
+
+    // MARK: 规则 / 预览 → 界面
+    /// 只在内容真的不同时才写回（用户打字时规则和输入框一致，不会打断输入；规则被程序改动时输入框跟着变）
+    private func sync(_ f: NSTextField, _ s: String) { if f.stringValue != s { f.stringValue = s } }
+    func refresh() {
+        let r = m.rule
+        sync(find, r.find); sync(replace, r.replace); sync(prefix, r.prefix); sync(suffix, r.suffix)
+        sync(format, r.format); sync(start, String(r.start)); sync(sep, r.separator)
+        caseBox.state = r.caseSensitive ? .on : .off; extBox.state = r.keepExt ? .on : .off
+        mode.selectedSegment = NumberMode.allCases.firstIndex(of: r.numberMode) ?? 0
+        stepper.integerValue = r.digits; digitsLabel.stringValue = "位数 \(r.digits)"
+        let on = r.numberMode != .off
+        start.isEnabled = on; stepper.isEnabled = on; sep.isEnabled = on; format.isEnabled = r.numberMode == .format
+        for (l, e) in [(startLabel, on), (sepLabel, on), (digitsLabel, on), (formatLabel, r.numberMode == .format)] { l.textColor = e ? .labelColor : .disabledControlTextColor }
+        example.stringValue = on ? "例：" + BatchRename.number(0, r) : ""
+        let blocking = m.blocking
+        count.stringValue = m.computing ? "正在计算预览…" : "将改名 \(m.changedCount) 项" + (blocking.isEmpty ? "" : "，\(blocking.count) 项有问题")
+        if let b = blocking.first, let msg = b.status.message { hint.stringValue = "无法重命名：“\(b.old)” — \(msg)"; hint.textColor = .systemRed }
+        else { hint.stringValue = "扩展名默认保留；可以用 ⌘Z 一次撤销整批改名。"; hint.textColor = .secondaryLabelColor }
+        okButton.isEnabled = m.canApply
+        let rows = Array(m.rows.prefix(500))
+        let foot: String? = m.rows.count > 500 ? "（只预览前 500 项，全部 \(m.rows.count) 项都会按同样规则检查和改名）" : nil
+        if rows != shown || foot != footer { shown = rows; footer = foot; table.reloadData() }
+    }
+
+    // MARK: 预览列表
+    func numberOfRows(in tableView: NSTableView) -> Int { shown.count + (footer == nil ? 0 : 1) }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { row < shown.count && shown[row].status.message != nil ? 34 : 18 }
+    func tableView(_ tv: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let id = NSUserInterfaceItemIdentifier("brcell")
+        let c = (tv.makeView(withIdentifier: id, owner: nil) as? RenamePreviewCell) ?? { let c = RenamePreviewCell(); c.identifier = id; return c }()
+        if row < shown.count { c.set(shown[row], nil) } else { c.set(nil, footer) }
+        return c
+    }
+}
+
+/// 预览列表的一行：直接绘制「旧名 → 新名」（有问题时下面再画一行红字），不建子视图
+final class FlippedView: NSView { override var isFlipped: Bool { true } }
+
+final class RenamePreviewCell: NSView {
+    private var row: RenameRow?, note: String?
+    func set(_ r: RenameRow?, _ n: String?) { row = r; note = n; needsDisplay = true }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingMiddle
+        let small = NSFont.systemFont(ofSize: 11), f = NSFont.systemFont(ofSize: 12)
+        let w = bounds.width - 16
+        if let n = note {
+            (n as NSString).draw(with: NSRect(x: 8, y: 1, width: w, height: 16), options: [.usesLineFragmentOrigin], attributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: p])
+            return
+        }
+        guard let r = row else { return }
+        let half = (w - 20) / 2
+        (r.old as NSString).draw(with: NSRect(x: 8, y: 1, width: half, height: 16), options: [.usesLineFragmentOrigin], attributes: [.font: f, .foregroundColor: NSColor.labelColor, .paragraphStyle: p])
+        ("→" as NSString).draw(at: NSPoint(x: 8 + half + 4, y: 2), withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.tertiaryLabelColor])
+        let c: NSColor = r.status.isBlocking ? .systemRed : (r.status == .unchanged ? .secondaryLabelColor : .labelColor)
+        (r.new as NSString).draw(with: NSRect(x: 8 + half + 20, y: 1, width: half, height: 16), options: [.usesLineFragmentOrigin], attributes: [.font: f, .foregroundColor: c, .paragraphStyle: p])
+        if let msg = r.status.message {
+            (msg as NSString).draw(with: NSRect(x: 8, y: 18, width: w, height: 15), options: [.usesLineFragmentOrigin], attributes: [.font: small, .foregroundColor: NSColor.systemRed, .paragraphStyle: p])
+        }
     }
 }

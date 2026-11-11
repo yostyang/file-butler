@@ -344,8 +344,17 @@ struct FileTable: NSViewRepresentable {
         func applySelection() {
             guard let tv = table else { return }
             let sel = tab.selection
-            var idx = IndexSet()
-            for (i, r) in rows.enumerated() { if case .item(let it) = r, sel.contains(it.url) { idx.insert(i) } }
+            var idx = IndexSet(), got = Set<URL>()
+            for (i, r) in rows.enumerated() { if case .item(let it) = r, sel.contains(it.url) { idx.insert(i); got.insert(it.url) } }
+            // 选中项的写法和列表不同（/tmp 与 /private/tmp 这类同一位置的两种写法，例如「前往」或命令面板选中的文件）：按名称在当前文件夹里对上
+            if got.count < sel.count && !tab.isGlobalSearch {
+                let map = matchByName(Array(sel.subtracting(got)), dir: tab.path, display: tab.display)
+                if !map.isEmpty {
+                    let want = Set(map.values)
+                    for (i, r) in rows.enumerated() { if case .item(let it) = r, want.contains(it.url) { idx.insert(i) } }
+                    tab.adoptSelectionForms(map, expected: sel)
+                }
+            }
             suppress = true; tv.selectRowIndexes(idx, byExtendingSelection: false); suppress = false
             if let f = idx.first { tv.scrollRowToVisible(f) }
         }

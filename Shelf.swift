@@ -31,10 +31,14 @@ final class ShelfModel: ObservableObject {
     func clear() { items = []; save() }
     /// 移动之后，文件架跟着指向新位置
     func relocate(_ pairs: [(URL, URL)]) {
-        guard !pairs.isEmpty else { return }
+        // 文件架通常只有几项：先按名称筛，只对可能相关的项目做路径标准化（1000 项改名时原来要 32ms，文件架为空时也一样）
+        guard !pairs.isEmpty, !items.isEmpty else { return }
+        let names = Set(items.map { $0.lastPathComponent })
         var map: [String: URL] = [:]
-        for (a, b) in pairs { map[a.standardizedFileURL.path] = b.standardizedFileURL }
-        items = items.map { map[$0.path] ?? $0 }; save()
+        for (a, b) in pairs where names.contains(a.lastPathComponent) { map[a.standardizedFileURL.path] = b.standardizedFileURL }
+        guard !map.isEmpty else { return }
+        let new = items.map { map[$0.path] ?? $0 }
+        if new != items { items = new; save() }
     }
     /// 去掉已经不存在的项目（例如在访达里删掉了）
     @discardableResult func prune() -> Int {

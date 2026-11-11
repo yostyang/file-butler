@@ -180,7 +180,12 @@ struct IconCollection: NSViewRepresentable {
         }
         func applySelection(scroll: Bool) {
             guard let cv = cv else { return }
-            let want = Set(tab.selection.compactMap { index[$0] })
+            var want = Set(tab.selection.compactMap { index[$0] })
+            // 和列表视图一样：写法不同的同一位置按名称对上
+            if want.count < tab.selection.count && !tab.isGlobalSearch {
+                let map = matchByName(tab.selection.filter { index[$0] == nil }, dir: tab.path, display: tab.display)
+                if !map.isEmpty { for v in map.values { if let ip = index[v] { want.insert(ip) } }; tab.adoptSelectionForms(map, expected: tab.selection) }
+            }
             if want != cv.selectionIndexPaths { suppress = true; cv.selectionIndexPaths = want; suppress = false }
             if scroll, let a = tab.anchor.flatMap({ index[$0] }) ?? want.min(), cv.numberOfSections > a.section {
                 let vis = cv.visibleRect

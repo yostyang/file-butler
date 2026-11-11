@@ -387,12 +387,14 @@ extension UITestRunner {
         app.undoStack.removeAll()
         // 移动（剪切粘贴）
         await moveMouse(to: center(0)); press("a", 0, .command); press("x", 7, .command)
+        let cutDiag = "⌘X 时：当前栏 \(app.active) 左栏选中 \(app.panes[0].tab.selection.count) 剪贴板 \(NSPasteboard.general.readObjects(forClasses: [NSURL.self])?.count ?? 0) 项"
         await moveMouse(to: center(1)); await settle(0.5)
+        let pasteDiag = "⌘V 时：当前栏 \(app.active) 焦点 \(String(describing: win.firstResponder.map { Swift.type(of: $0) }))"
         probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("v", 9, .command)
         ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 && self.app.panes[0].tab.display.isEmpty }
         pr = probe.stop()
-        check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max) + (ms >= 59000 ? " [左栏显示 \(app.panes[0].tab.display.count) 磁盘 \(names(B).count)，右栏显示 \(app.panes[1].tab.display.count) 磁盘 \(names(T).count)，idle=\(idle())]" : ""), t0: t0)
+        check("性能：剪切粘贴移动 \(N + 3) 个文件，主线程最长阻塞 < 50ms", pr.max < 50 && names(B).isEmpty, String(format: "耗时 %dms，主线程最长阻塞 %.1fms", ms, pr.max) + (ms >= 59000 ? " [左栏显示 \(app.panes[0].tab.display.count) 磁盘 \(names(B).count)，右栏显示 \(app.panes[1].tab.display.count) 磁盘 \(names(T).count)，idle=\(idle())；\(cutDiag)；\(pasteDiag)]" : ""), t0: t0)
         perf["move"] = Double(ms); perf["moveOp"] = app.lastOpMs; perf["moveMaxBlock"] = pr.max
         // 大目录滚动（列表 / 图标）
         if let (tv, _) = tableCoord(1) {

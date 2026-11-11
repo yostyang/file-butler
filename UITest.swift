@@ -271,6 +271,8 @@ final class UITestRunner {
             print("DEBUG hit", String(describing: win.contentView?.superview?.hitTest(win.contentView!.superview!.convert(p, from: nil)).map { Swift.type(of: $0) }))
         }
         if ProcessInfo.processInfo.environment["FB_PERFONLY"] != nil { await regressionTests(); writeChecklist(); finish(); return }
+        // 调试用：只跑 v0.6 部分（正常 test.sh 不设这个变量，照常跑全部）
+        if ProcessInfo.processInfo.environment["FB_V06ONLY"] != nil { await v06Tests(); writeChecklist(); finish(); return }
         await snapshots()
         if TestEnv.mode == "--uitest" { await uiTests() }
         finish()
