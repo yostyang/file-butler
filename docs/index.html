@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件管家 · 比访达更顺手的 macOS 双栏文件管理器</title>
-<meta name="description" content="双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少。原生 Swift 编写，开源免费。">
+<meta name="description" content="双栏、标签页、命令面板、批量重命名、文件架和实时预览。访达的常用功能一个不少。原生 Swift 编写，开源免费。v0.6.2。">
 <meta name="theme-color" content="#f6f6fa">
 <meta name="color-scheme" content="light">
 <meta property="og:title" content="文件管家 · 比访达更顺手的 macOS 双栏文件管理器">
-<meta property="og:description" content="双栏 + 标签页 + 实时预览 + 空间分析。原生 Swift 编写，开源免费。">
+<meta property="og:description" content="双栏 + 命令面板 + 批量重命名 + 文件架。原生 Swift 编写，开源免费。v0.6.2。">
 <meta property="og:image" content="icon.png">
 <link rel="icon" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
@@ -402,6 +402,7 @@ h1 .line{display:block}
 
 /* ============ bento ============ */
 .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px}
+.newfeat{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:56px}
 .card{
   position:relative;display:flex;flex-direction:column;padding:26px 24px;border-radius:20px;border:1px solid var(--line-2);
   background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));
@@ -607,7 +608,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   .pv-meta{border-left:0;border-top:1px solid #f0f0f5}
 }
 @media(max-width:640px){
-  .bento{grid-template-columns:1fr}
+  .bento,.newfeat{grid-template-columns:1fr}
   .hero{padding-top:112px}
   .brand span{display:none}
   .foot{flex-direction:column;align-items:flex-start;gap:16px}
@@ -675,6 +676,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   <nav class="navlinks">
     <a href="#problem" data-i="nav_why">为什么</a>
     <a href="#core" data-i="nav_core">核心功能</a>
+    <a href="#v06" data-i="nav_new">0.6 新功能</a>
     <a href="#features" data-i="nav_fn">全部功能</a>
     <a href="#safe" data-i="nav_safe">安全性</a>
   </nav>
@@ -689,12 +691,12 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
   <!-- ============ HERO ============ -->
   <section class="hero">
     <div class="hero-inner">
-      <div class="badge rise" style="--d:.05s"><span class="led"></span><span><b data-i="badge_b">开源 · 免费</b> · <span data-i="badge_a">下载约&nbsp;4&nbsp;MB</span></span></div>
+      <div class="badge rise" style="--d:.05s"><span class="led"></span><span><b data-i="badge_b">v0.6.2 · 开源免费</b> · <span data-i="badge_a">下载约&nbsp;5&nbsp;MB</span></span></div>
       <h1>
         <span class="line rise" style="--d:.12s" data-i="h1a">比访达更顺手，</span>
         <span class="line rise" style="--d:.2s"><span data-i="h1b">轻松管理</span> <span class="rot" id="rot"><span>文件</span></span></span>
       </h1>
-      <p class="sub rise" style="--d:.3s" data-i="sub">双栏、标签页、四种显示方式、实时预览、标签和空间分析。访达的常用功能一个不少。</p>
+      <p class="sub rise" style="--d:.3s" data-i="sub">双栏、标签页、命令面板、批量重命名和文件架。访达的常用功能一个不少，活动栏也按访达的方式切换。</p>
       <div class="hero-cta rise" style="--d:.38s">
         <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
           免费下载
@@ -702,7 +704,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         </a>
         <a class="btn btn-ghost" href="#core" data-i="cta2">看看它能做什么</a>
       </div>
-      <div class="hero-meta rise" style="--d:.46s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> <span class="sz">下载约&nbsp;4&nbsp;MB</span> <i>·</i> 开源免费</div>
+      <div class="hero-meta rise" style="--d:.46s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> <span class="sz">下载约&nbsp;5&nbsp;MB</span> <i>·</i> v0.6.2</div>
     </div>
 
     <div class="hero-visual rise" style="--d:.5s">
@@ -766,6 +768,9 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
       <div class="mq-item"><b data-i="m6">Spotlight 搜索</b></div>
       <div class="mq-item"><b data-i="m7">空间分析环形图</b></div>
       <div class="mq-item"><b data-i="m8">访达式进度窗口</b></div>
+      <div class="mq-item"><b data-i="m9">命令面板 ⌘K</b></div>
+      <div class="mq-item"><b data-i="m10">批量重命名</b></div>
+      <div class="mq-item"><b data-i="m11">文件架</b></div>
     </div>
   </div>
 
@@ -815,6 +820,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
             <li><i>✓</i><span data-i="vs_n2">空间分析内置，环形图一眼看清</span></li>
             <li><i>✓</i><span data-i="vs_n3">⌘1–⌘4 秒切四种视图，每个标签页各自记住</span></li>
             <li><i>✓</i><span data-i="vs_n4">重命名、移动、删除都能 ⌘Z 撤销</span></li>
+            <li><i>✓</i><span data-i="vs_n5">⌘K 命令面板、批量重命名、文件架</span></li>
           </ul>
         </div>
       </div>
@@ -828,10 +834,10 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         <div class="rv">
           <div class="eyebrow"><span class="dotp"></span><span data-i="co_eb">核心功能</span></div>
           <h2 data-i="co_h2">双栏 + 标签页，<br>整理文件更顺手</h2>
-          <p class="lead" data-i="co_p">左右两栏各自浏览，每栏都能开多个标签页。按 Tab 切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。</p>
+          <p class="lead" data-i="co_p">左右两栏各自浏览，每栏都能开多个标签页。活动栏只在点按时切换，悬停或拖过另一栏不会改；快捷键作用于最后点按的那一栏。按 Tab 也可切换，F5 拷贝、F6 移动到另一栏，也可以直接在两栏之间或和访达之间拖放。</p>
           <div class="steps">
             <div class="step"><span class="n">1</span><div><b data-i="co_s1t">开两栏</b><p data-i="co_s1d">左右并排，各有独立的路径和标签页，互不干扰。</p></div></div>
-            <div class="step"><span class="n">2</span><div><b data-i="co_s2t">选中</b><p data-i="co_s2d">点一下或用方向键，支持多选；Tab 在两栏之间切换焦点。</p></div></div>
+            <div class="step"><span class="n">2</span><div><b data-i="co_s2t">选中</b><p data-i="co_s2d">点一下或用方向键，支持多选。活动栏只在点按时切换；Tab 也可以在两栏之间切换。</p></div></div>
             <div class="step"><span class="n">3</span><div><b data-i="co_s3t">一键搬</b><p data-i="co_s3d">F5 拷贝、F6 移动，或者直接拖过去——包括拖进访达。</p></div></div>
           </div>
         </div>
@@ -852,6 +858,43 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
               <div class="mr new"><span class="fi pdf"></span><span>report.pdf</span></div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NEW IN 0.6 ============ -->
+  <section id="v06">
+    <div class="wrap">
+      <div class="sec-head center rv">
+        <div class="eyebrow"><span class="dotp"></span><span data-i="nw_eb">0.6 新功能</span></div>
+        <h2 data-i="nw_h2">命令面板、批量重命名、文件架</h2>
+        <p class="lead" data-i="nw_p">0.6 把整理文件时最费手脚的几步收进应用里。活动栏的切换也改成和访达一样：只有点按才会换栏。</p>
+      </div>
+      <div class="newfeat">
+        <div class="card rv" style="--d:.02s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 9h.01M10.5 9H17M7 13h10"/></svg></div>
+          <h3 data-i="nw1t">命令面板</h3>
+          <p data-i="nw1d">⌘K 打开。在一个面板里找文件、执行命令。只搜两栏当前文件夹、最近访问、书签、个人收藏、文件架，以及当前文件夹往下 4 层；不建索引，关掉就停止扫描。</p>
+          <div class="mini"><span>⌘K</span></div>
+        </div>
+        <div class="card rv" style="--d:.06s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h7M4 17h8"/><path d="M15 15l2 2 4-4"/></svg></div>
+          <h3 data-i="nw2t">批量重命名</h3>
+          <p data-i="nw2d">多选后右键「重新命名 N 个项目…」，或用操作菜单、命令面板。替换文字、加前缀或后缀、按序号编号，改前可预览；重名或非法名称会标红并禁止执行，整批一次 ⌘Z 撤销。</p>
+          <div class="mini"><span>Replace</span><span>Prefix</span><span>Number</span></div>
+        </div>
+        <div class="card rv" style="--d:.1s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h7.5L13 8.5H20v9.5a2 2 0 01-2 2H6a2 2 0 01-2-2V6.5z"/><path d="M8 13h8M8 16h5"/></svg></div>
+          <h3 data-i="nw3t">文件架</h3>
+          <p data-i="nw3d">从不同文件夹把文件收到文件架（右键或拖进去），再一起拷贝、移动，或用「拖动全部」把手拖到任意文件夹。只记住位置，移出或清空都不会改动文件，可 ⌘Z 撤销。</p>
+          <div class="mini"><span>Shelf</span></div>
+        </div>
+        <div class="card rv" style="--d:.14s">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7.5" height="16" rx="1.8"/><rect x="13.5" y="4" width="7.5" height="16" rx="1.8"/><path d="M6.8 14.5l2 2 3.2-4"/></svg></div>
+          <h3 data-i="nw4t">访达式活动栏</h3>
+          <p data-i="nw4d">活动栏只在点按时切换；悬停或拖过另一栏不会改。快捷键作用于最后点按的那一栏。当前文件夹被移走后，会退到还在的上级。</p>
+          <div class="mini"><span>Click</span><span>Finder</span></div>
         </div>
       </div>
     </div>
@@ -905,8 +948,8 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         <div class="card rv" style="--d:.02s">
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7 14h10"/></svg></div>
           <h3 data-i="f7t">键盘优先</h3>
-          <p data-i="f7d">Tab 切栏、F5 拷贝、F6 移动、⌘1–⌘4 换视图、⇧⌘P 预览、⌘F 搜索、⌘Z 撤销。手不用离开键盘。</p>
-          <div class="mini"><span>Tab</span><span>F5</span><span>F6</span><span>⌘Z</span></div>
+          <p data-i="f7d">⌘K 命令面板、Tab 切栏、F5 拷贝、F6 移动、⌘1–⌘4 换视图、⇧⌘P 预览、⌘F 搜索、⌘Z 撤销。手不用离开键盘。</p>
+          <div class="mini"><span>⌘K</span><span>Tab</span><span>F5</span><span>F6</span></div>
         </div>
         <div class="card rv" style="--d:.06s">
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9a3 3 0 010 6H6"/><path d="M9 16l-3-3 3-3"/><path d="M20 17H11"/></svg></div>
@@ -1101,7 +1144,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
     <div class="wrap">
       <img class="appicon rv" src="icon.png" alt="文件管家">
       <h2 class="rv" style="--d:.05s" data-i="fi_h2">给文件一个<br>更好用的家</h2>
-      <p class="lead rv" style="--d:.1s" data-i="fi_p">免费、开源，下载约&nbsp;4&nbsp;MB。下载完就能用，不用注册，不用登录。</p>
+      <p class="lead rv" style="--d:.1s" data-i="fi_p">免费、开源，v0.6.2，下载约&nbsp;5&nbsp;MB。下载完就能用，不用注册，不用登录。</p>
       <div class="hero-cta rv" style="--d:.15s">
         <a class="btn btn-primary" href="https://github.com/yostyang/file-butler/releases/latest" data-i="cta1">
           免费下载
@@ -1109,7 +1152,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
         </a>
         <a class="btn btn-ghost" href="https://github.com/yostyang/file-butler" data-i="fi_gh">在 GitHub 上看源码</a>
       </div>
-      <div class="hero-meta rv" style="--d:.2s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> <span class="sz">下载约&nbsp;4&nbsp;MB</span> <i>·</i> 开源免费</div>
+      <div class="hero-meta rv" style="--d:.2s" data-i="meta">macOS 13 及以上 <i>·</i> Apple 芯片与 Intel 通用 <i>·</i> <span class="sz">下载约&nbsp;5&nbsp;MB</span> <i>·</i> v0.6.2</div>
     </div>
   </section>
 
@@ -1122,6 +1165,7 @@ footer{position:relative;z-index:2;border-top:1px solid var(--line-2);padding:34
           <a href="https://github.com/yostyang/file-butler/releases" data-i="ft_rel">版本记录</a>
           <a href="https://yostyang.github.io/mac-optimizer/" data-i="ft_sib">Mac 一键优化</a>
         </nav>
+        <span data-i="ft_ver">v0.6.2</span>
         <span data-i="ft_made">vibe coded with ♥</span>
       </div>
     </div>
@@ -1139,13 +1183,13 @@ document.querySelectorAll("[data-i]").forEach(function(e){ ZH[e.dataset.i] = e.i
 
 var EN = {
   name:"File Butler",
-  nav_why:"Why", nav_core:"Core", nav_fn:"Features", nav_safe:"Safety", nav_dl:"Download",
-  badge_b:"Open source · Free", badge_a:"about&nbsp;4&nbsp;MB download",
+  nav_why:"Why", nav_core:"Core", nav_new:"What's new in 0.6", nav_fn:"Features", nav_safe:"Safety", nav_dl:"Download",
+  badge_b:"v0.6.2 · Open source · Free", badge_a:"about&nbsp;5&nbsp;MB download",
   h1a:"Smoother than Finder.", h1b:"Take charge of your",
-  sub:"Dual panes, tabs, four view modes, a live preview panel, tags and space analysis. Everything you use in Finder, and more.",
+  sub:"Dual panes, tabs, a command palette, batch rename and a shelf. Everything you use in Finder, and the active pane switches the Finder way.",
   cta1:'Download for free<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   cta2:"See what it does",
-  meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> <span class=\"sz\">About&nbsp;4&nbsp;MB download</span> <i>·</i> Free &amp; open source",
+  meta:"macOS 13+ <i>·</i> Apple silicon &amp; Intel <i>·</i> <span class=\"sz\">About&nbsp;5&nbsp;MB download</span> <i>·</i> v0.6.2",
   scroll:"Scroll",
   chip_mem:"~80 MB memory", chip2:"1 item copied",
   win_title:"File Butler", tab1:"Projects", tab2:"Home",
@@ -1154,6 +1198,7 @@ var EN = {
   status_k1:"switch", status_k2:"copy", status_k3:"move",
   m1:"Dual panes", m2:"Multiple tabs", m3:"Icon / List / Column / Gallery", m4:"Live preview panel",
   m5:"Finder tags shared", m6:"Spotlight search", m7:"Space analysis ring", m8:"Finder-style progress window",
+  m9:"Command palette ⌘K", m10:"Batch rename", m11:"Shelf",
   pb_eb:"The problem",
   pb_h2:"Finder is fine — until you have a lot of files",
   pb_p:"Finder does what it has to. But the moment you have thousands of files to put in order, that \"one step short\" gets amplified — every single move costs you another window switch.",
@@ -1175,11 +1220,12 @@ var EN = {
   vs_n2:"Space analysis built in, a ring chart tells the story",
   vs_n3:"⌘1–⌘4 switches views instantly, remembered per tab",
   vs_n4:"Rename, move and trash all undo with ⌘Z",
+  vs_n5:"Command palette (⌘K), batch rename, and a shelf",
   co_eb:"The core",
   co_h2:"Dual panes and tabs.<br>Tidying made easy.",
-  co_p:"Browse two folders side by side, each with its own tabs. Press Tab to switch, F5 to copy and F6 to move to the other pane, or just drag between panes and to or from Finder.",
+  co_p:"Browse two folders side by side, each with its own tabs. The active pane changes only when you click it — hovering or dragging across the other pane does not. Shortcuts act on the last pane you clicked. Tab also switches; F5 copies and F6 moves to the other pane, or just drag between panes and to or from Finder.",
   co_s1t:"Open two panes", co_s1d:"Side by side, each with its own path and tabs. They stay out of each other's way.",
-  co_s2t:"Select", co_s2d:"Click or use the arrow keys, multi-select included. Tab moves focus between panes.",
+  co_s2t:"Select", co_s2d:"Click or use the arrow keys, multi-select included. The active pane changes only on a click; Tab can also switch between panes.",
   co_s3t:"Move it", co_s3d:"F5 to copy, F6 to move, or just drag it across — into Finder too.",
   fp1:"Projects", fp2:"Downloads",
   bt_eb:"Everything",
@@ -1191,9 +1237,20 @@ var EN = {
   f4t:"Finder tags, shared", f4d:"Tags set in Finder show up here and can be edited. One click in the sidebar lists every file carrying that tag.",
   f5t:"Space analysis", f5d:"Measure a folder in one click: a ring chart plus a ranked list you can drill into. Spot a big file and reveal it or send it to the Trash right there.",
   f6t:"Grouping and sorting", f6d:"Group by kind, date, size or tag, and change the sort order any time. Big folders become scannable.",
-  f7t:"Keyboard first", f7d:"Tab to switch panes, F5 to copy, F6 to move, ⌘1–⌘4 for views, ⇧⌘P to preview, ⌘F to search, ⌘Z to undo. Your hands never leave the keyboard.",
+  f7t:"Keyboard first", f7d:"⌘K opens the command palette, Tab switches panes, F5 copies, F6 moves, ⌘1–⌘4 change views, ⇧⌘P previews, ⌘F searches, ⌘Z undoes. Your hands never leave the keyboard.",
   f8t:"Plays well with Finder", f8d:"Drag between panes, or to and from Finder. Tags, file types and icons all come from the system, so nothing looks foreign. Same-disk drags move, cross-disk drags copy (hold ⌥ to copy), name clashes get Finder's own Keep Both / Stop / Replace prompt, and big copies show a progress window you can stop at any time.",
   f9t:"Native and light", f9d:"Written in Swift and compiled for Apple silicon and Intel alike. About 80 MB of memory.",
+  nw_eb:"New in 0.6",
+  nw_h2:"Command palette, batch rename, and a shelf",
+  nw_p:"0.6 folds the fiddliest parts of organizing files into the app. The active pane now switches the Finder way: only a click changes it.",
+  nw1t:"Command palette",
+  nw1d:"Press ⌘K. Find files and run commands in one panel. It searches the current folder in both panes, Recents, bookmarks, Favorites, the shelf, and four levels down from the current folder. No index, and scanning stops the moment you close it.",
+  nw2t:"Batch rename",
+  nw2d:"After a multi-select, right-click “Rename N Items…” — the same place as in Finder — or use the Action menu or the command palette. Replace text, add a prefix or suffix, or number items, with a preview before you commit. Duplicate or illegal names are marked in red and blocked. The whole batch undoes with one ⌘Z.",
+  nw3t:"Shelf",
+  nw3d:"Collect files from different folders onto the shelf (right-click or drag them in), then copy or move them together, or drag them all to any folder with the “Drag all” handle. The shelf only remembers locations: removing or clearing items doesn’t change the files. ⌘Z undoes the transfer.",
+  nw4t:"Finder-style active pane",
+  nw4d:"The active pane changes only when you click it; hovering or dragging across the other pane does not. Shortcuts act on the last pane you clicked. If the current folder is gone, it falls back to the nearest folder that still exists.",
   st_eb:"The details", st_h2:"Four things you only notice once you use them",
   st_p:"Everything below is how the app actually works — no concept art.",
   s1k:"Preview", s1t:"See what's inside without opening it",
@@ -1223,9 +1280,9 @@ var EN = {
   in3:"The app isn't notarized by Apple. The first time, right-click it in Applications and choose Open, or go to System Settings › Privacy & Security and click \"Open Anyway\". Or run this in Terminal:",
   copy:"Copy",
   fi_h2:"Give your files<br>a better home",
-  fi_p:"Free, open source, about a&nbsp;4&nbsp;MB download. Download and run — no sign-up, no account.",
+  fi_p:"Free, open source, v0.6.2, about a&nbsp;5&nbsp;MB download. Download and run — no sign-up, no account.",
   fi_gh:"Read the source on GitHub",
-  ft_rel:"Releases", ft_sib:"Mac Optimizer", ft_made:"vibe coded with ♥"
+  ft_rel:"Releases", ft_sib:"Mac Optimizer", ft_ver:"v0.6.2", ft_made:"vibe coded with ♥"
 };
 var ROT = { zh:["文件","标签页","照片","下载","素材"], en:["files","tabs","photos","downloads","assets"] };
 var TITLE = {
