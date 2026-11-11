@@ -44,6 +44,8 @@ extension UITestRunner {
 
     func v061Tests() async {
         let F = TestEnv.fixture.realFileURL
+        // 结束时两栏回到进来时的位置和显示方式（后面的深色 / 浅色截图拍的是右栏）
+        let entry = (0..<2).map { (app.panes[$0].tab.path, app.panes[$0].tab.viewMode) }
         let D = F.appendingPathComponent("v061")
         try? fm.removeItem(at: D)
         let S = D.appendingPathComponent("下载"), T = D.appendingPathComponent("目标"), Sub = T.appendingPathComponent("子目录")
@@ -288,7 +290,7 @@ extension UITestRunner {
 
         // 收尾
         DragMods.override = []
-        await go(0, F, .list); await go(1, F, .list)
+        for i in 0..<2 { await go(i, entry[i].0, entry[i].1) }
         for u in trashed { try? fm.removeItem(at: u) }
         try? fm.removeItem(at: D)
     }
