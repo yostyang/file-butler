@@ -159,13 +159,53 @@ extension UITestRunner {
         app.controllers[1].columnSelect(K.appendingPathComponent("a文件夹"), at: 0); await settle(0.6)
         func state(_ i: Int) -> String { let t = app.panes[i].tab; return t.path.path + "|" + t.columnChain.map { $0.lastPathComponent }.joined(separator: ",") + "|" + t.selection.map { $0.lastPathComponent }.sorted().joined(separator: ",") }
         let before = (state(0), state(1))
+        let activeBefore = app.active
         let hoverTargets = Array(markers(1).prefix(10))
         for m in hoverTargets { await moveMouse(to: mid(m)) }
         let r1 = paneRect(1)
         for x in stride(from: r1.minX + 20, to: r1.maxX - 10, by: 60) { await moveMouse(to: NSPoint(x: x, y: r1.midY)) }
         await settle(0.4)
         check("分栏视图：鼠标在各栏上移动不打开、不选中文件夹（两栏位置和选择不变）", (state(0), state(1)) == before && hoverTargets.count >= 3, "经过 \(hoverTargets.count) 个项目；\(state(1))")
-        check("分栏视图：活动栏仍跟随鼠标（快捷键作用于鼠标下的栏）", app.active == 1, "活动栏 \(app.active)，第一响应者 \(String(describing: win.firstResponder.map { Swift.type(of: $0) }))")
+        check("分栏视图：鼠标悬停不切换活动栏（访达：只有点按才切换）", app.active == activeBefore, "活动栏 \(app.active)，悬停前 \(activeBefore)")
+
+        // ===== v0.6.2：分栏视图右栏 → 左栏拖动 =====
+        // 用户报告：右栏（分栏视图）里的文件夹被移走后，右栏还显示原来的路径和旧列表，从右栏拖文件到左栏报「No such file or directory」；
+        // 鼠标经过左栏时活动栏也跟着变。访达：拖动经过不切换活动栏、不改变两栏位置；显示的位置不存在时不再显示。
+        do {
+            let P = D.appendingPathComponent("项目"), M = P.appendingPathComponent("music"), Dst = D.appendingPathComponent("左栏目标")
+            for d in [M, Dst] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+            mkfile(M.appendingPathComponent("鼓.mp3"), "鼓"); mkfile(M.appendingPathComponent("贝斯.mp3"), "贝斯")
+            await go(0, Dst, .column); await go(1, P, .column)
+            let tR = app.panes[1].tab, tL = app.panes[0].tab
+            app.controllers[1].columnSelect(M, at: 0); await settle(0.6)
+            app.controllers[1].columnSelect(M.appendingPathComponent("鼓.mp3"), at: 1); await settle(0.4)
+            PaneFocus.follow(mouse(.leftMouseDown, center(1)), app: app); await settle(0.2)
+            let leftBefore = state(0)
+            let row = markers(1, bg: false).first { $0.url?.lastPathComponent == "鼓.mp3" }
+            let hit = row.flatMap { MultiDrag.marker(at: mid($0), in: win) }
+            // 拖动经过左栏：鼠标移动 / 拖动事件不切换活动栏、不改变两栏位置
+            for x in stride(from: paneRect(1).midX, to: paneRect(0).midX, by: -80) {
+                PaneFocus.follow(mouse(.leftMouseDragged, NSPoint(x: x, y: center(0).y)), app: app)
+                PaneFocus.follow(mouse(.mouseMoved, NSPoint(x: x, y: center(0).y)), app: app)
+            }
+            let dragURLs = MultiDrag.urlsToDrag(M.appendingPathComponent("鼓.mp3"), tab: tR)
+            check("右→左拖动：按下的是右栏的行，拖动内容取自右栏（真实存在的文件）", hit?.tab === tR && dragURLs.map { $0.lastPathComponent } == ["鼓.mp3"] && dragURLs.allSatisfy { exists($0) }, "识别 \(hit?.url?.lastPathComponent ?? "无")，拖动 \(dragURLs.map { $0.path })")
+            check("右→左拖动：经过左栏时活动栏仍是右栏，左栏位置不变", app.active == 1 && state(0) == leftBefore, "active=\(app.active)")
+            app.alert = nil; t0 = Date()
+            FinderDrop.perform(app: app, dir: tL.columnChain.last ?? tL.path, pasteboard: urlPasteboard(dragURLs), providers: [])
+            ms = await waitUntil(8) { exists(Dst.appendingPathComponent("鼓.mp3")) && self.idle() }
+            check("右→左拖动：文件移进左栏的文件夹，没有报错", exists(Dst.appendingPathComponent("鼓.mp3")) && !exists(M.appendingPathComponent("鼓.mp3")) && app.alert == nil, "\(ms)ms \(app.alert?.message ?? "")", t0: t0)
+            // 右栏正在显示的文件夹被移走（例如拖到左栏）：右栏不再显示已经不存在的路径，也拖不出不存在的文件
+            app.controllers[1].columnSelect(M.appendingPathComponent("贝斯.mp3"), at: 1); await settle(0.4)
+            FinderDrop.perform(app: app, dir: Dst, pasteboard: urlPasteboard([M]), providers: [])
+            await waitUntil(8) { exists(Dst.appendingPathComponent("music")) && self.idle() }
+            await waitUntil(3) { tR.columnChain.isEmpty }
+            let stale = MultiDrag.urlsToDrag(M.appendingPathComponent("贝斯.mp3"), tab: tR).filter { !exists($0) }
+            check("右→左拖动：右栏的文件夹被移走后不再显示它（分栏链截掉、路径栏不显示不存在的路径）", tR.columnChain.isEmpty && exists(tR.pathTarget) && tR.selection.allSatisfy { exists($0) }, "chain=\(tR.columnChain.map { $0.lastPathComponent }) 路径栏=\(tR.pathTarget.path) 不存在的拖动项 \(stale.count)")
+            app.undo(); await waitUntil(8) { exists(M) && self.idle() }
+            app.undo(); await waitUntil(8) { exists(M.appendingPathComponent("鼓.mp3")) && self.idle() }
+            try? fm.removeItem(at: P); try? fm.removeItem(at: Dst)
+        }
 
         // ===== 8. 分栏视图：方向键 =====
         let tK = app.panes[1].tab

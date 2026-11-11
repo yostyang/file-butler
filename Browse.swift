@@ -322,7 +322,9 @@ struct ColumnBrowser: View {
     func select(_ it: FileItem, at i: Int, items: [FileItem]) {
         app.focusPane(index)
         let f = NSEvent.modifierFlags
-        if f.contains(.command) || f.contains(.shift) { tab.click(it.url, order: items.map { $0.url }); return }
+        let dir = columns[i].standardizedFileURL.path
+        let sameColumn = tab.selection.allSatisfy { $0.deletingLastPathComponent().standardizedFileURL.path == dir }
+        if (f.contains(.command) || f.contains(.shift)) && sameColumn { tab.click(it.url, order: items.map { $0.url }); return }
         tab.columnChain = Array(tab.columnChain.prefix(i))
         if it.isFolderLike { tab.columnChain.append(it.url); loader.load(it.url, hidden: app.showHidden, sortKey: tab.sortKey, asc: tab.asc) }
         tab.selection = [it.url]; tab.anchor = it.url

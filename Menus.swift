@@ -288,6 +288,8 @@ enum MultiDrag {
         guard hypot(e.locationInWindow.x - p.at.x, e.locationInWindow.y - p.at.y) > 4 else { return false }
         pending = nil
         let urls = urlsToDrag(p.url, tab: t)
+        // 列表里的项目已经不在磁盘上（被别处移走）：不拖，刷新这一栏（截掉不存在的栏）
+        guard !urls.isEmpty, urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { NSSound.beep(); t.reload(); return true }
         if !t.selection.contains(p.url) { t.selection = [p.url]; t.anchor = p.url }
         let local = v.convert(p.at, from: nil)
         let items = ShelfDragView.draggingItems(urls, from: v)
@@ -296,7 +298,7 @@ enum MultiDrag {
         return true
     }
     /// 拖动选中的项目时拖动全部选中项目，否则只拖被按住的那一个
-    static func urlsToDrag(_ u: URL, tab: TabModel) -> [URL] { itemMenuURLs(tab, u) }
+    static func urlsToDrag(_ u: URL, tab: TabModel) -> [URL] { withoutNested(itemMenuURLs(tab, u)) }
 }
 final class MultiDragSource: NSObject, NSDraggingSource {
     func draggingSession(_ s: NSDraggingSession, sourceOperationMaskFor ctx: NSDraggingContext) -> NSDragOperation { [.copy, .move, .link, .generic] }
@@ -317,7 +319,7 @@ func pathSegmentSpec(app: AppState, pane i: Int, url u: URL) -> [MEntry] {
 }
 func volumeName(_ u: URL) -> String? { (try? u.resourceValues(forKeys: [.volumeNameKey]))?.volumeName }
 /// 全局事件监听：
-/// 1. 活动栏跟随鼠标（移动、滚动、按键、右键时，鼠标所在的栏就是活动栏）
+/// 1. 活动栏：在某一栏里按下鼠标（左键 / 右键）时切换到那一栏；悬停、滚动、拖动经过、按键都不切换（访达）
 /// 2. 分栏 / 画廊视图的右键菜单：在右键时才构建（AppKit 菜单），不在每次界面刷新时预先计算
 enum RightClick {
     static var monitor: Any?
@@ -331,11 +333,11 @@ enum RightClick {
             guard let a = app else { return e }
             if let w = e.window, !w.acceptsMouseMovedEvents, w.toolbar != nil { w.acceptsMouseMovedEvents = true }
             switch e.type {
-            case .mouseMoved, .scrollWheel: PaneFocus.follow(e, app: a); return e
+            case .mouseMoved, .scrollWheel: return e   // 访达：悬停、滚动不切换活动栏
             case .leftMouseDragged: return MultiDrag.dragged(e) ? nil : e
             case .leftMouseUp: MultiDrag.pending = nil; return e
             case .keyDown:
-                PaneFocus.follow(e, app: a)
+                // 快捷键作用于最后点按的那一栏（活动栏），与鼠标在哪无关
                 // 切换显示方式、关闭重命名框等之后，焦点可能短暂落在窗口本身：快捷键仍然作用于当前栏（访达的快捷键总是有效）
                 if let w = e.window, w.toolbar != nil, w.attachedSheet == nil, a.active < a.controllers.count,
                    w.firstResponder === w || w.firstResponder == nil || strayResponder(w.firstResponder, mode: a.activeTab.viewMode) {
@@ -345,7 +347,10 @@ enum RightClick {
                 }
                 return e
             default:
-                if e.type == .leftMouseDown { MultiDrag.pending = nil; if !a.palette.visible, !e.modifierFlags.contains(.control) { MultiDrag.down(e) } }
+                if e.type == .leftMouseDown {
+                    MultiDrag.pending = nil
+                    if !a.palette.visible, !e.modifierFlags.contains(.control) { PaneFocus.follow(e, app: a); MultiDrag.down(e) }
+                }
                 // 命令面板打开时：右键 / 点按交给面板本身，不弹出底下文件栏的菜单
                 if a.palette.visible { return e }
                 guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }

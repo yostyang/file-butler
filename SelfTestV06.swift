@@ -198,5 +198,31 @@ extension SelfTest {
         pb.writeObjects(dragMany.map { $0 as NSURL })
         check("放下：从拖动剪贴板读出全部 11 个文件", fileURLs(pb).count == 11, "\(fileURLs(pb).count) 个")
         pb.releaseGlobally()
+
+        // ===== v0.6.2：右栏 → 左栏拖动报「No such file or directory」 =====
+        // 活动栏只在按下鼠标时切换（访达），悬停、拖动经过、按键都不切换
+        check("活动栏：只有按下鼠标才切换，移动 / 拖动 / 滚动 / 按键都不切换",
+              PaneFocus.switches(on: .leftMouseDown) && PaneFocus.switches(on: .rightMouseDown) && !PaneFocus.switches(on: .mouseMoved) && !PaneFocus.switches(on: .leftMouseDragged) && !PaneFocus.switches(on: .scrollWheel) && !PaneFocus.switches(on: .keyDown))
+        // 同时选中文件夹和它里面的文件：只搬文件夹（以前文件夹先搬走，里面的文件报 No such file）
+        let G = root.appendingPathComponent("右左拖动"); try? fm.removeItem(at: G)
+        let Pj = G.appendingPathComponent("project"), Mu = Pj.appendingPathComponent("music"), Lf = G.appendingPathComponent("yostNano")
+        for d in [Mu, Lf] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        let drum = Mu.appendingPathComponent("国会内部鼓.mp3"); touch(drum, "drum"); touch(Mu.appendingPathComponent("贝斯.mp3"), "bass")
+        let nested = withoutNested([Mu, drum, Lf])
+        check("拖动 / 移动：文件夹和它里面的文件一起选中时只搬文件夹", nested == [Mu, Lf], nested.map { $0.lastPathComponent }.joined(separator: ","))
+        let fr = FileOps.transfer(withoutNested([Mu, drum]), to: Lf, mode: .move, progress: nil, resolve: { _, _ in (.stop, false) })
+        check("拖动 / 移动：右栏的 music 连同选中的文件拖到左栏，没有报错、文件都在", fr.errs.isEmpty && exists(Lf.appendingPathComponent("music/国会内部鼓.mp3")) && exists(Lf.appendingPathComponent("music/贝斯.mp3")), fr.errs.joined(separator: "；"))
+        try? fm.moveItem(at: Lf.appendingPathComponent("music"), to: Mu)
+        // 右栏（分栏视图）正在显示的文件夹被移走：不再显示已经不存在的路径
+        let app2 = AppState(); let tR = app2.panes[0].tab
+        tR.navigate(G); tR.viewMode = .column
+        tR.columnChain = [Pj, Mu]; tR.selection = [drum]; tR.anchor = drum
+        try? fm.moveItem(at: Mu, to: Lf.appendingPathComponent("music"))
+        tR.pruneMissing()
+        check("分栏视图：显示中的文件夹被移走 → 截掉不存在的栏、去掉不存在的选中项，路径栏只显示存在的路径",
+              tR.columnChain == [Pj] && tR.selection.isEmpty && exists(tR.pathTarget), "chain=\(tR.columnChain.map { $0.lastPathComponent }) sel=\(tR.selection.count) 路径栏=\(tR.pathTarget.lastPathComponent)")
+        tR.columnChain = []; tR.navigate(Pj); try? fm.removeItem(at: Pj); tR.pruneMissing()
+        check("当前文件夹被删除 / 移走 → 退到最近的仍存在的上级", tR.path.standardizedFileURL.path == G.standardizedFileURL.path && tR.columnChain.isEmpty, tR.path.path)
+        try? fm.removeItem(at: G)
     }
 }

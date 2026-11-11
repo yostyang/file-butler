@@ -179,25 +179,29 @@ extension UITestRunner {
             shot("ui-icon-dual")
         } else { check("拖拽（图标）：找到两栏的图标视图", false) }
 
-        // ===== 活动栏跟随鼠标 =====
+        // ===== 活动栏：只有点按才切换（v0.6.2 起与访达一致；以前是跟随鼠标） =====
         await go(0, L, .list); await go(1, R, .list)
         app.focusPane(0); await settle(0.3)
         let leftSel = Set([L.appendingPathComponent("b1.txt")])
-        app.panes[0].tab.selection = leftSel; await settle(0.2)
+        app.panes[0].tab.selection = leftSel; app.panes[1].tab.selection = []; await settle(0.2)
         t0 = Date()
         await moveMouse(to: center(1))
-        check("活动栏：鼠标移到右栏 → 右栏成为活动栏（不用点）", app.active == 1 && win.firstResponder === app.responders[1].v, "active=\(app.active)", t0: t0)
-        check("活动栏：切换后左栏的选中保持不变", app.panes[0].tab.selection == leftSel)
+        check("活动栏：鼠标移到右栏但不点 → 仍是左栏（访达）", app.active == 0, "active=\(app.active)", t0: t0)
+        check("活动栏：鼠标悬停后两栏选中都不变", app.panes[0].tab.selection == leftSel && app.panes[1].tab.selection.isEmpty)
         press("a", 0, .command); await settle(0.3)
-        check("活动栏：鼠标在右栏时 ⌘A 作用于右栏", app.panes[1].tab.selection.count == app.panes[1].tab.display.count && app.panes[0].tab.selection == leftSel, "右=\(app.panes[1].tab.selection.count) 左=\(app.panes[0].tab.selection.count)")
-        await moveMouse(to: center(0))
-        let backMs = await waitUntil(2) { self.app.active == 0 }
-        check("活动栏：鼠标回到左栏 → 左栏活动", app.active == 0, "\(backMs + 250)ms")
+        check("活动栏：鼠标在右栏时 ⌘A 作用于最后点按的左栏", app.panes[0].tab.selection.count == app.panes[0].tab.display.count && app.panes[1].tab.selection.isEmpty, "右=\(app.panes[1].tab.selection.count) 左=\(app.panes[0].tab.selection.count)")
+        app.panes[0].tab.selection = leftSel; await settle(0.2)
+        PaneFocus.follow(mouse(.leftMouseDown, center(1)), app: app); await settle(0.2)
+        check("活动栏：在右栏按下鼠标 → 右栏成为活动栏，左栏选中不变", app.active == 1 && app.panes[0].tab.selection == leftSel, "active=\(app.active)")
+        PaneFocus.follow(mouse(.leftMouseDown, center(0)), app: app); await settle(0.2)
+        check("活动栏：在左栏按下鼠标 → 左栏活动", app.active == 0)
         t0 = Date()
-        press("c", 8, .command); await moveMouse(to: center(1)); press("v", 9, .command)
+        press("c", 8, .command)
+        PaneFocus.follow(mouse(.leftMouseDown, center(1)), app: app); app.focusPane(1); await settle(0.3)
+        press("v", 9, .command)
         ms = await waitUntil { exists(R.appendingPathComponent("b1 2.txt")) || (exists(R.appendingPathComponent("b1.txt")) && names(R).filter { $0.hasPrefix("b1") }.count >= 2) }
         AppState.conflictOverride = nil
-        check("活动栏：左栏 ⌘C → 鼠标移到右栏 ⌘V = 粘贴到右栏", names(R).filter { $0.hasPrefix("b1") }.count >= 2, names(R).sorted().joined(separator: ","), t0: t0)
+        check("活动栏：左栏 ⌘C → 点右栏 → ⌘V = 粘贴到右栏", names(R).filter { $0.hasPrefix("b1") }.count >= 2, names(R).sorted().joined(separator: ","), t0: t0)
         await waitUntil { idle() }
         app.focusPane(1); await settle(0.2)
         let r0 = paneRect(0)
@@ -206,7 +210,10 @@ extension UITestRunner {
         TestWindow.mouse = center(1)
         let kd = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
         PaneFocus.follow(kd, app: app)
-        check("活动栏：按键时以鼠标所在栏为准", app.active == 1)
+        check("活动栏：按键时不看鼠标位置（仍是最后点按的左栏）", app.active == 0)
+        PaneFocus.follow(mouse(.mouseMoved, center(1)), app: app)
+        PaneFocus.follow(mouse(.leftMouseDragged, center(1)), app: app)
+        check("活动栏：鼠标移动、拖动经过都不切换", app.active == 0)
         // 正在重命名时不抢焦点
         app.focusPane(0); await settle(0.3)
         app.panes[0].tab.selection = [L.appendingPathComponent("b1.txt")]; press("\r", 36); await settle(0.5)

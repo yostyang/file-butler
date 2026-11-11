@@ -420,6 +420,9 @@ final class TabModel: ObservableObject, Identifiable {
         } else { selection = [u]; anchor = u }
     }
     func reload() {
+        pruneMissing()
+        // 分栏视图里右侧各栏的列表也一起重读（以前只重读第一栏，右侧栏留着已经移走的旧内容）
+        if viewMode == .column, let l = columnLoader { for c in columnChain { l.load(c, hidden: app?.showHidden ?? false, sortKey: sortKey, asc: asc) } }
         loadToken += 1; let tok = loadToken, p = path, hidden = app?.showHidden ?? false
         // 只有列表为空时才显示「加载中」（避免每次刷新都多一轮界面重绘）
         if items.isEmpty && !loading { loading = true }
@@ -453,6 +456,26 @@ final class TabModel: ObservableObject, Identifiable {
                 self.app?.noteTags(res)
                 self.watch()
             }
+        }
+    }
+    /// 显示的位置在磁盘上已经不存在（被移走、改名、删除）时不再显示它（访达行为）：
+    /// 当前文件夹不在了 → 退到最近的仍存在的上级；分栏视图里不在了的栏截掉；不在了的选中项去掉。
+    /// 只检查当前文件夹、分栏链和不在当前文件夹里的选中项（数量都很少），不读目录。
+    func pruneMissing() {
+        let fm = FileManager.default
+        if !isGlobalSearch, path.path != "/", !fm.fileExists(atPath: path.path) {
+            var p = path.deletingLastPathComponent()
+            while p.path != "/" && !fm.fileExists(atPath: p.path) { p = p.deletingLastPathComponent() }
+            path = p.standardizedFileURL; columnChain = []; selection = []; anchor = nil; error = nil; permissionDenied = false
+            return
+        }
+        if let i = columnChain.firstIndex(where: { !fm.fileExists(atPath: $0.path) }) {
+            columnChain = Array(columnChain.prefix(i))
+        }
+        let dir = path.path
+        if !selection.isEmpty && selection.count <= 2000 {
+            let keep = selection.filter { $0.deletingLastPathComponent().path == dir || fm.fileExists(atPath: $0.path) }
+            if keep.count != selection.count { selection = keep; if let a = anchor, !keep.contains(a) { anchor = nil } }
         }
     }
     private func watch() {
@@ -925,6 +948,8 @@ final class AppState: ObservableObject {
         }
     }
     func transfer(_ urls: [URL], to dir: URL, mode: TransferMode, done: ((TransferResult) -> Void)? = nil) {
+        // 同时选中了文件夹和它里面的项目时只搬文件夹（否则文件夹先搬走，里面的项目就报「No such file」）
+        let urls = withoutNested(urls)
         guard !urls.isEmpty else { return }
         let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count, kind: (mode == .move || (mode == .auto && sameVolume(urls[0], dir))) ? .move : .copy, first: urls[0].lastPathComponent, dest: dir.lastPathComponent)
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
@@ -1166,5 +1191,15 @@ extension TabModel {
             self.selection = Set(expected.map { map[$0] ?? $0 })
             if let a = self.anchor, let b = map[a] { self.anchor = b }
         }
+    }
+}
+
+/// 去掉祖先文件夹也在列表里的项目（文件夹搬走时里面的东西随之搬走）
+func withoutNested(_ urls: [URL]) -> [URL] {
+    let paths = Set(urls.map { $0.standardizedFileURL.path })
+    return urls.filter { u in
+        var p = u.standardizedFileURL.deletingLastPathComponent()
+        while p.path != "/" && !p.path.isEmpty { if paths.contains(p.path) { return false }; p = p.deletingLastPathComponent() }
+        return true
     }
 }

@@ -246,8 +246,10 @@ func fileURLs(_ pb: NSPasteboard) -> [URL] {
     pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
 }
 
-// MARK: - 活动栏跟随鼠标
+// MARK: - 活动栏（访达行为：只有在某一栏里按下鼠标才切换，鼠标悬停、拖动经过、按键都不切换）
 enum PaneFocus {
+    /// 只有按下鼠标（左键、右键、其他键）才会切换活动栏
+    static func switches(on t: NSEvent.EventType) -> Bool { t == .leftMouseDown || t == .rightMouseDown || t == .otherMouseDown }
     /// 窗口坐标 → 这一点所在的栏（按横向范围判断，标签栏、路径栏、内容区都算）
     static func pane(at p: NSPoint, in w: NSWindow, app: AppState) -> Int? {
         for i in 0..<(app.dual ? 2 : 1) {
@@ -261,10 +263,15 @@ enum PaneFocus {
     /// 正在输入（就地重命名、搜索框、路径输入）时不抢焦点
     static func isEditingText(_ w: NSWindow) -> Bool { w.firstResponder is NSTextView }
     static func follow(_ e: NSEvent, app: AppState) {
-        guard app.dual, let w = e.window ?? NSApp.keyWindow, w.attachedSheet == nil else { return }
-        if e.type == .mouseMoved && NSEvent.pressedMouseButtons != 0 { return }
-        let p = e.type == .keyDown ? w.mouseLocationOutsideOfEventStream : e.locationInWindow
-        guard let i = pane(at: p, in: w, app: app), i != app.active || (e.type != .mouseMoved && w.firstResponder !== app.keyView(i, in: w)) else { return }
+        guard switches(on: e.type), app.dual, let w = e.window ?? NSApp.keyWindow, w.attachedSheet == nil else { return }
+        let p = e.locationInWindow
+        guard let i = pane(at: p, in: w, app: app) else { return }
+        if e.type == .leftMouseDown && !e.modifierFlags.contains(.control) {
+            // 左键：只切换活动栏，第一响应者交给被点的视图自己处理（文本框、列表等）
+            if i != app.active, !isEditingText(w) { app.active = i }
+            return
+        }
+        guard i != app.active || w.firstResponder !== app.keyView(i, in: w) else { return }
         if isEditingText(w) { return }
         app.active = i
         if let v = app.keyView(i, in: w), w.firstResponder !== v { w.makeFirstResponder(v) }
