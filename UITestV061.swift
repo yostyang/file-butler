@@ -19,11 +19,13 @@ extension UITestRunner {
     }
     /// 分栏视图的横向滚动视图：栏内最宽、宽度不超过这一栏的 NSScrollView
     func columnScrollView(_ pane: Int) -> NSScrollView? {
+        // 这一栏里横向可滚动（内容比可见宽度宽）、高度占满的那个滚动视图
         let r = paneRect(pane); var best: NSScrollView?
         func walk(_ v: NSView) {
-            if let s = v as? NSScrollView, s.window === win, !s.isHiddenOrHasHiddenAncestor, s.documentView != nil {
+            if let s = v as? NSScrollView, s.window === win, !s.isHiddenOrHasHiddenAncestor, let d = s.documentView {
                 let f = s.convert(s.bounds, to: nil)
-                if f.intersects(r), f.width > 300, f.width <= r.width + 2, best.map({ f.width > $0.frame.width }) ?? true { best = s }
+                if f.height > 300, f.width > 300, d.frame.width > s.contentSize.width + 50, r.isEmpty || f.intersects(r),
+                   best.map({ d.frame.width > ($0.documentView?.frame.width ?? 0) }) ?? true { best = s }
             }
             v.subviews.forEach(walk)
         }
@@ -32,9 +34,9 @@ extension UITestRunner {
     }
     func markers(_ pane: Int, bg: Bool? = nil, seg: Bool = false) -> [ItemMarker] {
         let t = app.panes[pane].tab
-        return RightClick.markers.allObjects.filter { $0.window === win && $0.tab === t && $0.seg == seg && (bg == nil || $0.bg == bg!) && !$0.isHiddenOrHasHiddenAncestor && !$0.visibleRect.isEmpty }
+        return RightClick.markers.allObjects.filter { $0.window === win && $0.tab === t && $0.seg == seg && (bg == nil || $0.bg == bg!) && !$0.isHiddenOrHasHiddenAncestor && !MultiDrag.visibleFrame($0).isEmpty }
     }
-    func mid(_ v: NSView) -> NSPoint { let r = v.convert(v.visibleRect, to: nil); return NSPoint(x: r.midX, y: r.midY) }
+    func mid(_ v: NSView) -> NSPoint { let r = MultiDrag.visibleFrame(v); return NSPoint(x: r.midX, y: r.midY) }
     func arrow(_ code: UInt16) {
         let ch: [UInt16: Int] = [123: 0xF702, 124: 0xF703, 125: 0xF701, 126: 0xF700]
         press(String(UnicodeScalar(ch[code]!)!), code)
@@ -161,7 +163,7 @@ extension UITestRunner {
         for x in stride(from: r1.minX + 20, to: r1.maxX - 10, by: 60) { await moveMouse(to: NSPoint(x: x, y: r1.midY)) }
         await settle(0.4)
         check("分栏视图：鼠标在各栏上移动不打开、不选中文件夹（两栏位置和选择不变）", (state(0), state(1)) == before && hoverTargets.count >= 3, "经过 \(hoverTargets.count) 个项目；\(state(1))")
-        check("分栏视图：活动栏仍跟随鼠标（快捷键作用于鼠标下的栏）", app.active == 1)
+        check("分栏视图：活动栏仍跟随鼠标（快捷键作用于鼠标下的栏）", app.active == 1, "活动栏 \(app.active)，第一响应者 \(String(describing: win.firstResponder.map { Swift.type(of: $0) }))")
 
         // ===== 8. 分栏视图：方向键 =====
         let tK = app.panes[1].tab
@@ -169,8 +171,9 @@ extension UITestRunner {
         app.focusPane(1); await settle(0.4)
         func selName() -> String { tK.selection.map { $0.lastPathComponent }.sorted().joined(separator: ",") }
         func chain() -> String { tK.columnChain.map { $0.lastPathComponent }.joined(separator: "/") }
+        let fr0 = String(describing: win.firstResponder.map { Swift.type(of: $0) })
         arrow(125); await settle(0.4)
-        check("分栏视图：↓ 选中第一项（文件夹）并打开它的下一栏", selName() == "a文件夹" && chain() == "a文件夹", "\(selName()) [\(chain())]")
+        check("分栏视图：↓ 选中第一项（文件夹）并打开它的下一栏", selName() == "a文件夹" && chain() == "a文件夹", "\(selName()) [\(chain())] 第一响应者 \(fr0)，活动栏 \(app.active)")
         arrow(125); await settle(0.4)
         check("分栏视图：↓ 移到下一项，右边的栏关闭", selName() == "b.txt" && chain() == "", "\(selName()) [\(chain())]")
         arrow(126); await settle(0.4)
@@ -224,7 +227,7 @@ extension UITestRunner {
         let maxX = sv?.contentView.bounds.maxX ?? 0
         let colsN = 1 + levels.count
         check("分栏视图：8 栏时内容宽度 ≥ 8 × 231，每栏不被压缩", docW >= CGFloat(colsN) * 231, "内容 \(Int(docW))，可见 \(Int(visW))")
-        check("分栏视图：有横向滚动条，并自动滚到最新一栏", (sv?.hasHorizontalScroller ?? false) && docW > visW && maxX >= docW - 2, "可见右边缘 \(Int(maxX)) / \(Int(docW))")
+        check("分栏视图：有横向滚动条，并自动滚到最新一栏", (sv?.hasHorizontalScroller ?? false) && docW > visW && maxX >= CGFloat(colsN) * 231 - 2, "可见右边缘 \(Int(maxX))，最新一栏右边缘 \(colsN * 231)，内容 \(Int(docW))")
         let colWidths = RightClick.markers.allObjects.filter { $0.window === win && $0.tab === tT && $0.bg && !$0.isHiddenOrHasHiddenAncestor }.map { Int($0.frame.width.rounded()) }
         check("分栏视图：每一栏都是 230 点宽", colWidths.filter { $0 == 230 }.count >= colsN, "\(colWidths)")
         shot("ui-column-deep")

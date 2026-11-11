@@ -188,7 +188,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         if urls == nil && QLPreviewPanel.sharedPreviewPanelExists() && p.isVisible { p.orderOut(nil); return }
         qlURLs = urls ?? tab.selectedURLs
         guard !qlURLs.isEmpty else { NSSound.beep(); return }
-        if let v = app.responders[pane].v { v.window?.makeFirstResponder(v) }
+        if let v = app.keyView(pane) { v.window?.makeFirstResponder(v) }
         if TestEnv.active { return }   // 测试时不在屏幕上弹出快速查看窗口
         p.dataSource = self; p.delegate = self
         p.makeKeyAndOrderFront(nil); p.reloadData()

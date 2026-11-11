@@ -697,6 +697,25 @@ final class AppState: ObservableObject {
     func selectTab(pane: Int, index: Int) { panes[pane].current = index; active = pane; touch(); focusActiveTable() }
     func switchPane() { guard dual else { NSSound.beep(); return }; active = 1 - active; focusActiveTable() }
     func focusActiveTable() { focusPane(active) }
+    /// 这一栏当前负责键盘的视图。切换显示方式时，旧视图的最后一次更新可能晚于新视图的创建，
+    /// 登记的会是一个已经离开窗口的视图（于是活动栏不跟随鼠标、方向键发到另一栏）。
+    /// 这时在窗口里找这一栏正在显示的视图并重新登记；只在登记的视图失效时才遍历视图树。
+    func keyView(_ i: Int, in w: NSWindow? = nil) -> NSView? {
+        guard i < responders.count else { return nil }
+        if let v = responders[i].v, v.window != nil, !v.isHiddenOrHasHiddenAncestor { return v }
+        guard let root = (w ?? TestWindow.win ?? NSApp?.mainWindow ?? NSApp?.windows.first(where: { $0.toolbar != nil }))?.contentView?.superview else { return responders[i].v }
+        var found: NSView?
+        func walk(_ v: NSView) {
+            if found != nil || v.isHidden { return }
+            if let k = v as? FBKeyView, k.pane == i { found = k; return }
+            if let t = v as? FBTableView, (t.delegate as? FileTable.Coordinator)?.pane == i { found = t; return }
+            if let c = v as? FBCollectionView, c.coord?.pane == i { found = c; return }
+            v.subviews.forEach(walk)
+        }
+        walk(root)
+        if let f = found { responders[i].v = f }
+        return found ?? responders[i].v
+    }
     func focusPane(_ i: Int) {
         if active != i { active = i }
         focusAttempt(i, 0)
@@ -705,7 +724,7 @@ final class AppState: ObservableObject {
     private func focusAttempt(_ i: Int, _ n: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + (n == 0 ? 0 : 0.05)) {
             guard self.active == i else { return }
-            if let v = self.responders[i].v, let w = v.window {
+            if let v = self.keyView(i), let w = v.window {
                 if w.firstResponder === v || w.makeFirstResponder(v) { return }
             }
             if n < 10 { self.focusAttempt(i, n + 1) }

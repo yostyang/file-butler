@@ -257,14 +257,18 @@ struct ColumnBrowser: View {
                         .onTapGesture { app.focusPane(index); deselect(in: columns.count - 1) }
                         .background(ItemMarkerView(url: columns.last ?? tab.path, tab: tab, bg: true))
                         .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: columns.last ?? tab.path))
+                        .id("tail")
                 }
                 // 内容宽度明确给出：栏数 × 231 + 预览栏 + 右侧空白，任何情况下都不会被挤压
                 .frame(width: L.total, height: geo.size.height, alignment: .leading)
             }
             // 底部横向滚动条（跟随系统设置：自动隐藏 / 始终显示）
             .scrollIndicators(.visible, axes: .horizontal)
-            .onAppear { DispatchQueue.main.async { proxy.scrollTo(preview != nil ? "preview" : "col\(columns.count - 1)", anchor: .trailing) } }
-            .onChange(of: tab.columnChain) { _ in withAnimation { proxy.scrollTo(previewItem != nil ? "preview" : "col\(columns.count - 1)", anchor: .trailing) } }
+            // 滚到最新一栏（连同右边的空白）；等这一轮排版完成后再滚，新加的栏才有位置
+            .onAppear { DispatchQueue.main.async { proxy.scrollTo("tail", anchor: .trailing) } }
+            .onChange(of: tab.columnChain) { _ in DispatchQueue.main.async { withAnimation { proxy.scrollTo("tail", anchor: .trailing) } } }
+            // 最新一栏的内容读完后再对齐一次（重绘可能打断上面的滚动动画）
+            .onChange(of: loader.lists[tab.columnChain.last?.path ?? ""]?.count) { _ in if previewItem == nil { proxy.scrollTo("tail", anchor: .trailing) } }
             .onChange(of: tab.selection) { _ in if previewItem != nil { withAnimation { proxy.scrollTo("preview", anchor: .trailing) } } }
         }
         }

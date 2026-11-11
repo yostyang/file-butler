@@ -266,9 +266,16 @@ enum MultiDrag {
         var h = root.hitTest(root.convert(p, from: root.superview))
         while let v = h { if v is NSTableView || v is NSCollectionView || v is NSTextView || v is NSControl { return nil }; h = v.superview }
         return RightClick.markers.allObjects.first { m in
-            m.window === w && !m.bg && !m.seg && m.url != nil && m.tab != nil && !m.isHiddenOrHasHiddenAncestor
-                && !m.visibleRect.isEmpty && m.convert(m.visibleRect, to: nil).contains(p)
+            m.window === w && !m.bg && !m.seg && m.url != nil && m.tab != nil && !m.isHiddenOrHasHiddenAncestor && visibleFrame(m).contains(p)
         }
+    }
+    /// 标记在窗口里实际可见的区域：自身范围再裁掉所在滚动视图之外的部分
+    /// （SwiftUI 承载的视图 visibleRect 不可靠，会比自身还大，不能直接用）
+    static func visibleFrame(_ m: NSView) -> NSRect {
+        var r = m.convert(m.bounds, to: nil)
+        var s = m.enclosingScrollView
+        while let sv = s { r = r.intersection(sv.convert(sv.bounds, to: nil)); s = sv.enclosingScrollView }
+        return r
     }
     static func down(_ e: NSEvent) {
         pending = nil

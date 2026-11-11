@@ -251,7 +251,7 @@ enum PaneFocus {
     /// 窗口坐标 → 这一点所在的栏（按横向范围判断，标签栏、路径栏、内容区都算）
     static func pane(at p: NSPoint, in w: NSWindow, app: AppState) -> Int? {
         for i in 0..<(app.dual ? 2 : 1) {
-            guard let v = app.responders[i].v, v.window === w, !v.isHiddenOrHasHiddenAncestor else { continue }
+            guard let v = app.keyView(i, in: w), v.window === w, !v.isHiddenOrHasHiddenAncestor else { continue }
             let box = (v is FBKeyView ? v : (v.enclosingScrollView ?? v))
             let r = box.convert(box.bounds, to: nil)
             if p.x >= r.minX && p.x < r.maxX && p.y >= r.minY - 2 && p.y <= r.maxY + 70 { return i }
@@ -264,10 +264,10 @@ enum PaneFocus {
         guard app.dual, let w = e.window ?? NSApp.keyWindow, w.attachedSheet == nil else { return }
         if e.type == .mouseMoved && NSEvent.pressedMouseButtons != 0 { return }
         let p = e.type == .keyDown ? w.mouseLocationOutsideOfEventStream : e.locationInWindow
-        guard let i = pane(at: p, in: w, app: app), i != app.active || (e.type != .mouseMoved && w.firstResponder !== app.responders[i].v) else { return }
+        guard let i = pane(at: p, in: w, app: app), i != app.active || (e.type != .mouseMoved && w.firstResponder !== app.keyView(i, in: w)) else { return }
         if isEditingText(w) { return }
         app.active = i
-        if let v = app.responders[i].v, w.firstResponder !== v { w.makeFirstResponder(v) }
+        if let v = app.keyView(i, in: w), w.firstResponder !== v { w.makeFirstResponder(v) }
     }
 }
 
