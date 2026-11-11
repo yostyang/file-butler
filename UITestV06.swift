@@ -179,28 +179,44 @@ extension UITestRunner {
         for i in 0..<1000 { fm.createFile(atPath: P.appendingPathComponent(String(format: "原%04d.txt", i)).path, contents: Data("x".utf8)) }
         await go(0, P, .list); await waitUntil { tA.display.count == 1000 }
         app.focusPane(0); await settle(0.3); press("a", 0, .command); await settle(0.3)
-        let probe = MainThreadProbe(); probe.start(); t0 = Date()
-        var phase = MainThreadProbe(); phase.start()   // 分段：打开表单 / 预览 / 执行，便于定位阻塞在哪一步
+        // 按用户决定（2026-11-11）分成两部分：
+        //  1) 改名本身（预览 + 执行 + 刷新列表）主线程最长阻塞 < 50ms —— 判定通过 / 失败，门槛不变
+        //  2) 打开 / 关闭表单的耗时 —— 只记录，不计通过 / 失败（本窗口里一个空白表单开关本身就要约 40–70ms）
+        t0 = Date()
+        var phase = MainThreadProbe(); phase.start()
         app.beginBatchRename(tA.selectedURLs)
         if let m = app.batchRename {
-            await waitUntil(3) { self.win.attachedSheet != nil }; await settle(0.1)
-            let openMax = phase.stop().max; phase = MainThreadProbe(); phase.start()
+            await waitUntil(3) { self.win.attachedSheet != nil }; await settle(0.3)
+            let openMax = phase.stop().max
+            // 预览（表单已打开）
+            phase = MainThreadProbe(); phase.start()
             m.rule.numberMode = .format; m.rule.format = "批"; m.rule.digits = 4
             ms = await waitUntil(10) { !m.computing && m.canApply }
             let previewMs = ms
             await settle(0.2)
-            let previewMax = phase.stop().max; phase = MainThreadProbe(); phase.start()
-            app.applyBatchRename(m.rows); app.batchRename = nil
+            let previewMax = phase.stop().max
+            // 关闭表单（和点「重命名」一样：先关表单再执行）
+            let rows = m.rows
+            phase = MainThreadProbe(); phase.start()
+            app.batchRename = nil
+            await waitUntil(3) { self.win.attachedSheet == nil }; await settle(0.3)
+            let closeMax = phase.stop().max
+            // 执行 + 刷新列表
+            phase = MainThreadProbe(); phase.start()
+            let ta = Date()
+            app.applyBatchRename(rows)
             ms = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("批 ") } && self.shown(0).allSatisfy { $0.hasPrefix("批 ") } }
             let applyMax = phase.stop().max
-            let pr = probe.stop()
-            check("性能：批量重命名 1000 项（预览 + 执行），主线程最长阻塞 < 50ms", pr.max < 50 && names(P).count == 1000 && names(P).allSatisfy { $0.hasPrefix("批 ") },
-                  String(format: "预览 %dms，执行 %dms，主线程最长阻塞 %.1fms（打开表单 %.1f / 预览 %.1f / 执行+刷新 %.1f）", previewMs, ms, pr.max, openMax, previewMax, applyMax), t0: t0)
-            perf["batchRenamePreview"] = Double(previewMs); perf["batchRenameApply"] = Double(ms); perf["batchRenameMaxBlock"] = pr.max
+            let work = max(previewMax, applyMax)
+            check("性能：批量重命名 1000 项（预览 + 执行 + 刷新列表），主线程最长阻塞 < 50ms", work < 50 && names(P).count == 1000 && names(P).allSatisfy { $0.hasPrefix("批 ") },
+                  String(format: "预览 %dms，执行 %dms，主线程最长阻塞 %.1fms（预览 %.1f / 执行+刷新 %.1f）", previewMs, Int(Date().timeIntervalSince(ta) * 1000), work, previewMax, applyMax), t0: t0)
+            print(String(format: "记录  性能：批量重命名表单打开 / 关闭，主线程最长阻塞 打开 %.1fms / 关闭 %.1fms（只记录，不计通过 / 失败）", openMax, closeMax))
+            perf["batchRenamePreview"] = Double(previewMs); perf["batchRenameApply"] = Double(ms); perf["batchRenameMaxBlock"] = work
+            perf["batchRenameSheetOpenMaxBlock"] = openMax; perf["batchRenameSheetCloseMaxBlock"] = closeMax
             t0 = Date(); app.undo()
             ms = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("原") } }
             check("性能：撤销 1000 项批量重命名", names(P).count == 1000 && names(P).allSatisfy { $0.hasPrefix("原") }, "\(ms)ms", t0: t0)
-        } else { _ = probe.stop(); check("性能：批量重命名 1000 项", false, "没有打开") }
+        } else { _ = phase.stop(); check("性能：批量重命名 1000 项", false, "没有打开") }
         await go(0, A, .list); app.focusPane(0); await settle(0.3)
 
         // ===== 文件架 =====
