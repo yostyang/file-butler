@@ -24,7 +24,7 @@ extension UITestRunner {
         func walk(_ v: NSView) {
             if let s = v as? NSScrollView, s.window === win, !s.isHiddenOrHasHiddenAncestor, let d = s.documentView {
                 let f = s.convert(s.bounds, to: nil)
-                if f.height > 300, f.width > 300, d.frame.width > s.contentSize.width + 50, r.isEmpty || f.intersects(r),
+                if f.height > 300, f.width > 150, d.frame.width > s.contentSize.width + 50, r.isEmpty || f.intersects(r),
                    best.map({ d.frame.width > ($0.documentView?.frame.width ?? 0) }) ?? true { best = s }
             }
             v.subviews.forEach(walk)
