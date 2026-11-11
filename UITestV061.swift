@@ -178,11 +178,12 @@ extension UITestRunner {
             await go(0, Dst, .column); await go(1, P, .column)
             let tR = app.panes[1].tab, tL = app.panes[0].tab
             app.controllers[1].columnSelect(M, at: 0); await settle(0.6)
-            app.controllers[1].columnSelect(M.appendingPathComponent("鼓.mp3"), at: 1); await settle(0.4)
+            // 和访达一样：按住一个未选中的文件直接拖，只拖它自己（不先选中，右栏窄时选中文件后预览栏会把这一栏挤出可见范围）
             PaneFocus.follow(mouse(.leftMouseDown, center(1)), app: app); await settle(0.2)
             let leftBefore = state(0)
             let row = markers(1, bg: false).first { $0.url?.lastPathComponent == "鼓.mp3" }
-            let hit = row.flatMap { MultiDrag.marker(at: mid($0), in: win) }
+            // 右栏较窄时这一行可能滚到可见范围外：能命中就用命中结果，否则用这一行自己的标记
+            let hit = row.flatMap { MultiDrag.visibleFrame($0).isEmpty ? $0 : (MultiDrag.marker(at: mid($0), in: win) ?? $0) }
             // 拖动经过左栏：鼠标移动 / 拖动事件不切换活动栏、不改变两栏位置
             for x in stride(from: paneRect(1).midX, to: paneRect(0).midX, by: -80) {
                 PaneFocus.follow(mouse(.leftMouseDragged, NSPoint(x: x, y: center(0).y)), app: app)
@@ -204,6 +205,8 @@ extension UITestRunner {
             check("右→左拖动：右栏的文件夹被移走后不再显示它（分栏链截掉、路径栏不显示不存在的路径）", tR.columnChain.isEmpty && exists(tR.pathTarget) && tR.selection.allSatisfy { exists($0) }, "chain=\(tR.columnChain.map { $0.lastPathComponent }) 路径栏=\(tR.pathTarget.path) 不存在的拖动项 \(stale.count)")
             app.undo(); await waitUntil(8) { exists(M) && self.idle() }
             app.undo(); await waitUntil(8) { exists(M.appendingPathComponent("鼓.mp3")) && self.idle() }
+            // 两栏回到这一段开始前的位置（后面的方向键测试用右栏的「键盘」文件夹）
+            await go(0, S, .list); await go(1, K, .column)
             try? fm.removeItem(at: P); try? fm.removeItem(at: Dst)
         }
 
@@ -308,7 +311,7 @@ extension UITestRunner {
         app.recents.removeAll { $0 == ghost }
 
         // ===== 7. 文件夹的快速查看 =====
-        await go(0, D, .list); await moveMouse(to: center(0)); app.focusPane(0)
+        await go(0, D, .list); await clickPane(0); app.focusPane(0)
         await tableSelect(0, ["空文件夹"]); await settle(0.3)
         let peek = FolderPeek.shared
         app.sizeReq = nil

@@ -46,7 +46,7 @@ extension UITestRunner {
         mkfile(C.appendingPathComponent("架2.txt"), "架2")
         app.dual = true; app.showPreview = false; app.shelf.clear(); app.shelf.visible = false; await settle(0.4)
         await go(0, A, .list); await go(1, Bd, .list)
-        await moveMouse(to: center(0)); app.focusPane(0); await settle(0.3)
+        await clickPane(0); app.focusPane(0); await settle(0.3)
         var trashed: [URL] = []
         let tA = app.panes[0].tab
         let p = app.palette
@@ -234,7 +234,7 @@ extension UITestRunner {
         app.addToShelf([A.appendingPathComponent("说明.md")])
         check("文件架：重复加入不会出现两次", app.shelf.items.count == 2)
         // 拷贝到另一栏（命令面板）
-        await moveMouse(to: center(1)); app.focusPane(1); await settle(0.3)
+        await clickPane(1); app.focusPane(1); await settle(0.3)
         t0 = Date(); ok = await openPalette(); type("文件架：拷贝")
         await waitUntil(2) { p.results.first?.title.hasPrefix("文件架：拷贝") == true }
         press("\r", 36)

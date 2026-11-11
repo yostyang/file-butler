@@ -51,6 +51,10 @@ extension UITestRunner {
     func moveMouse(to p: NSPoint) async {
         NSApp.postEvent(mouse(.mouseMoved, p), atStart: false); await settle(0.25)
     }
+    /// 点按一栏使它成为活动栏（v0.6.2 起活动栏只在点按时切换，和访达一样；以前测试只移动鼠标）
+    func clickPane(_ i: Int) async {
+        PaneFocus.follow(mouse(.leftMouseDown, center(i)), app: app); app.focusPane(i); await settle(0.25)
+    }
     func center(_ pane: Int) -> NSPoint { let r = paneRect(pane); return NSPoint(x: r.midX, y: r.midY) }
     func go(_ pane: Int, _ u: URL, _ mode: ViewMode) async {
         let t = app.panes[pane].tab
@@ -222,7 +226,7 @@ extension UITestRunner {
         press("\u{1b}", 53); await settle(0.4)
 
         // ===== 基础功能 =====
-        await moveMouse(to: center(0)); app.focusPane(0); await settle(0.3)
+        await clickPane(0); app.focusPane(0); await settle(0.3)
         let tl = app.panes[0].tab
         // 浏览
         t0 = Date()
@@ -287,18 +291,18 @@ extension UITestRunner {
         ms = await waitUntil { shown(0).contains("操作 副本.txt") && idle() }
         check("文件操作：⌘D 复制（「副本」）并立即显示", exists(L.appendingPathComponent("操作 副本.txt")) && shown(0).contains("操作 副本.txt"), "\(ms)ms", t0: t0)
         t0 = Date(); tl.selection = [L.appendingPathComponent("操作 副本.txt")]; press("x", 7, .command)
-        await moveMouse(to: center(1)); press("v", 9, .command)
+        await clickPane(1); press("v", 9, .command)
         ms = await waitUntil { exists(R.appendingPathComponent("操作 副本.txt")) && !shown(0).contains("操作 副本.txt") && shown(1).contains("操作 副本.txt") && idle() }
         check("文件操作：⌘X 剪切 → 另一栏 ⌘V 移动", exists(R.appendingPathComponent("操作 副本.txt")) && !exists(L.appendingPathComponent("操作 副本.txt")), "\(ms)ms", t0: t0)
-        await moveMouse(to: center(0))
+        await clickPane(0)
         t0 = Date(); tl.selection = [op]; press("c", 8, .command)
-        await moveMouse(to: center(1)); press("v", 9, [.command, .option])
+        await clickPane(1); press("v", 9, [.command, .option])
         ms = await waitUntil { exists(R.appendingPathComponent("操作.txt")) && !exists(op) && idle() }
         check("文件操作：⌘C 后 ⌥⌘V = 移动到这里", exists(R.appendingPathComponent("操作.txt")) && !exists(op), "\(ms)ms", t0: t0)
         // 同名冲突
         mkfile(op, "new")
-        await moveMouse(to: center(0)); tl.reload(); await settle(0.4)
-        tl.selection = [op]; press("c", 8, .command); await moveMouse(to: center(1))
+        await clickPane(0); tl.reload(); await settle(0.4)
+        tl.selection = [op]; press("c", 8, .command); await clickPane(1)
         t0 = Date(); AppState.conflictOverride = (.keepBoth, false); press("v", 9, .command)
         ms = await waitUntil { exists(R.appendingPathComponent("操作 2.txt")) && idle() }
         check("同名冲突：保留两者 → 「操作 2.txt」", exists(R.appendingPathComponent("操作 2.txt")), "\(ms)ms", t0: t0)
@@ -311,7 +315,7 @@ extension UITestRunner {
         check("同名冲突：停止 → 不改动", names(R) == before, "", t0: t0)
         AppState.conflictOverride = nil
         // 新建文件夹 + 重命名
-        await moveMouse(to: center(0)); app.focusPane(0)
+        await clickPane(0); app.focusPane(0)
         t0 = Date(); press("N", 45, [.command, .shift]); await waitUntil(3) { self.win.firstResponder is NSTextView }
         type("回归新建"); press("\r", 36)
         ms = await waitUntil { exists(L.appendingPathComponent("回归新建")) && shown(0).contains("回归新建") }
@@ -369,8 +373,8 @@ extension UITestRunner {
         await waitUntil { self.app.panes[0].tab.display.count == N + 3 }
         perf["listLoad"] = 0
         // 拷贝
-        await moveMouse(to: center(0)); press("a", 0, .command); press("c", 8, .command)
-        await moveMouse(to: center(1)); await settle(0.5)
+        await clickPane(0); press("a", 0, .command); press("c", 8, .command)
+        await clickPane(1); await settle(0.5)
         var probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("v", 9, .command)
         ms = await waitUntil(60) { self.idle() && self.app.panes[1].tab.display.count == N + 3 }
@@ -393,9 +397,9 @@ extension UITestRunner {
         if case .trashed(let p)? = app.undoStack.last { trashed += p.map { $0.1 } }
         app.undoStack.removeAll()
         // 移动（剪切粘贴）
-        await moveMouse(to: center(0)); press("a", 0, .command); press("x", 7, .command)
+        await clickPane(0); press("a", 0, .command); press("x", 7, .command)
         let cutDiag = "⌘X 时：当前栏 \(app.active) 左栏选中 \(app.panes[0].tab.selection.count) 剪贴板 \(NSPasteboard.general.readObjects(forClasses: [NSURL.self])?.count ?? 0) 项"
-        await moveMouse(to: center(1)); await settle(0.5)
+        await clickPane(1); await settle(0.5)
         let pasteDiag = "⌘V 时：当前栏 \(app.active) 焦点 \(String(describing: win.firstResponder.map { Swift.type(of: $0) }))"
         probe = MainThreadProbe(); probe.start()
         t0 = Date(); press("v", 9, .command)
@@ -604,7 +608,7 @@ extension UITestRunner {
         // 6. 剪切粘贴同名冲突（⌘X → 另一栏 ⌘V）也走同一个对话框
         t0 = Date(); AppState.conflictOverride = (.keepBoth, false)
         app.focusPane(0); tlSelect(0, [L.appendingPathComponent("y.txt")]); press("x", 7, .command)
-        await moveMouse(to: center(1)); app.focusPane(1); await settle(0.3); press("v", 9, .command)
+        await clickPane(1); app.focusPane(1); await settle(0.3); press("v", 9, .command)
         ms = await waitUntil { exists(R.appendingPathComponent("y 2.txt")) && idle() }
         check("访达规则：剪切粘贴同名 → 保留两者「y 2.txt」，不报错", exists(R.appendingPathComponent("y 2.txt")) && !exists(L.appendingPathComponent("y.txt")) && app.alert == nil, "\(ms)ms", t0: t0)
         AppState.conflictOverride = nil
@@ -631,7 +635,7 @@ extension UITestRunner {
         check("访达规则：拖到它所在的文件夹 → 不做任何事", op == [], "op=\(op.rawValue)")
         t0 = Date()
         let before = names(L)
-        await moveMouse(to: center(0)); app.focusPane(0); tlSelect(0, [L.appendingPathComponent("run.mp3")]); press("x", 7, .command); press("v", 9, .command)
+        await clickPane(0); app.focusPane(0); tlSelect(0, [L.appendingPathComponent("run.mp3")]); press("x", 7, .command); press("v", 9, .command)
         await waitUntil(2) { self.idle() }; await settle(0.4)
         check("访达规则：剪切后在同一文件夹粘贴 → 不做任何事（不产生副本）", names(L) == before && app.alert == nil, "\(names(L).sorted())", t0: t0)
         // 10. 拷贝后 ⌘Z → 拷贝出的项目被撤销
