@@ -146,55 +146,47 @@ struct SearchBox: View {
     /// 访达行为：空闲时只显示放大镜按钮，点开（或 ⌘F）才展开成搜索框；有搜索词时保持展开
     var collapsed: Bool { !expanded && text.isEmpty && !focused && chrome.tagFilter == nil }
     var body: some View {
-        Group {
-            if collapsed {
-                // 工具栏条件分支里的 Button 渲染出来但 action 接不上线（SwiftUI bug），改用手势
-                Image(systemName: "magnifyingglass")
-                    .frame(width: 30, height: 26)
+        // 单一容器 + 宽度动画 = 访达式放大镜滑开成搜索框；容器始终挂载，状态同步不会丢
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+                // 折叠：点按展开；展开：点按呼出搜索建议（含最近搜索），替代访达放大镜菜单
+                .onTapGesture { expand() }
+            if !collapsed {
+                // 选了「内容包含」后显示访达式 token，点 × 回到名称匹配
+                // （工具栏条件分支里的 Button/Menu action 接不上线，一律用手势）
+                if chrome.matchMode == .contents {
+                    HStack(spacing: 3) {
+                        Text("内容").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    }
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(Capsule().fill(accentA.opacity(0.2)))
                     .contentShape(Rectangle())
-                    .onTapGesture { expand() }
-                    .help("搜索 ⌘F")
-            } else { field }
+                    .onTapGesture { tab.matchMode = .name }
+                }
+                TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
+                    .onExitCommand { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
+                if !text.isEmpty || chrome.tagFilter != nil {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                        .onTapGesture { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
+                }
+            }
         }
-        // 状态同步必须挂在始终存在的外层：折叠时 field 不在视图树里，挂它上面的 onChange 永远收不到事件
+        .padding(.horizontal, collapsed ? 6 : 7).frame(width: collapsed ? 30 : 210, height: 26)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor).opacity(collapsed ? 0 : 1)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(collapsed ? 0 : 0.15), lineWidth: focused ? 1.5 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture { if collapsed { expand() } }
+        .animation(.snappy(duration: 0.2), value: collapsed)
+        .help("搜索 ⌘F")
+        // 状态同步必须挂在始终存在的外层：折叠时输入框不在视图树里，挂它上面的 onChange 永远收不到事件
         .onAppear { text = tab.searchText; if !text.isEmpty { expanded = true } }
         .onChange(of: text) { if !$0.isEmpty { expanded = true }; tab.setSearch($0); updateSuggestions() }
         .onChange(of: focused) { if !$0 { SearchSuggestions.shared.hide() } else { updateSuggestions() } }
         .onChange(of: chrome.searchText) { if $0 != text { text = $0 } }
         .onChange(of: app.searchFocus) { _ in expand() }
-    }
-    var field: some View {
-        HStack(spacing: 4) {
-            // 访达式放大镜菜单：最近的搜索
-            Menu {
-                if app.recentSearches.isEmpty { Text("没有最近搜索") }
-                else {
-                    ForEach(app.recentSearches, id: \.self) { s in Button(s) { text = s } }
-                    Divider()
-                    Button("清除最近搜索") { app.clearRecentSearches() }
-                }
-            } label: { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("最近的搜索")
-            // 选了「内容包含」后显示访达式 token，点 × 回到名称匹配
-            if chrome.matchMode == .contents {
-                HStack(spacing: 3) {
-                    Text("内容").font(.system(size: 11, weight: .medium))
-                    Button { tab.matchMode = .name } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }.buttonStyle(.plain)
-                }
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(Capsule().fill(accentA.opacity(0.2)))
-            }
-            TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
-                .onExitCommand { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
-            if !text.isEmpty || chrome.tagFilter != nil {
-                Button { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 7).frame(width: 210, height: 26)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(0.15), lineWidth: focused ? 1.5 : 1))
-        .help("搜索 ⌘F")
     }
     /// 展开搜索框并聚焦（点放大镜按钮、⌘F、有搜索词时）
     func expand() {
@@ -382,7 +374,7 @@ struct TabContent: View {
                 case .gallery: GalleryView(tab: tab, index: index)
                 }
                 if tab.isGlobalSearch {
-                    if tab.searching && tab.display.isEmpty { ProgressView("正在用 Spotlight 搜索…").controlSize(.small) }
+                    if tab.searching && tab.display.isEmpty { ProgressView("正在搜索…").controlSize(.small) }
                     else if tab.display.isEmpty { Text("没有找到结果").foregroundStyle(.secondary).allowsHitTesting(false) }
                 }
                 else if tab.permissionDenied { PermissionView() }
@@ -395,7 +387,7 @@ struct TabContent: View {
 }
 
 extension TabContent {
-    var effectiveMode: ViewMode { tab.isGlobalSearch || (tab.searchActive && tab.viewMode == .column) ? .list : tab.viewMode }
+    var effectiveMode: ViewMode { tab.searchActive && tab.viewMode == .column ? .list : tab.viewMode }
 }
 struct SearchScopeBar: View {
     @EnvironmentObject var app: AppState
@@ -678,7 +670,7 @@ struct StatusContent: View {
                 Button { app.cancelOp() } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).help("停止")
             }
             Spacer()
-            if tab.viewMode == .icon && !tab.isGlobalSearch {
+            if tab.viewMode == .icon {
                 Image(systemName: "photo").font(.system(size: 9))
                 Slider(value: $app.iconSize, in: 32...256).frame(width: 110).controlSize(.mini)
                 Image(systemName: "photo").font(.system(size: 13))

@@ -522,6 +522,11 @@ final class TabModel: ObservableObject, Identifiable {
         searching = true; recompute()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self, tok == self.searchToken else { return }
+            // 名称搜索走快速路径：子文件夹→后台枚举，整台 Mac→searchfs 卷宗目录；内容/标签仍需 Spotlight
+            if !self.needsSpotlight {
+                if self.searchScope == .mac, FastSearch.catalogSupported { self.startCatalogSearch() } else { self.startEnumSearch() }
+                return
+            }
             self.startQuery()
         }
     }
@@ -535,7 +540,39 @@ final class TabModel: ObservableObject, Identifiable {
         matchMode = s.matchMode; criteria = s.criteria; searchScope = s.scope; tagFilter = nil; selection = []
         searchText = s.text; refreshSearch()
     }
+    /// 快速路径 1：子文件夹递归枚举——直接扫文件系统，几十毫秒出第一批结果
+    private func startEnumSearch() {
+        let root = path, q = searchText, hidden = app?.showHidden ?? false, tok = searchToken
+        searchResults = []
+        FastSearch.enumerate(root: root, query: q, showHidden: hidden, isCancelled: { [weak self] in self?.searchToken != tok },
+            onBatch: { [weak self] urls in
+                let its = urls.map(makeItem).filter { self?.clientMatch($0) ?? false }
+                DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
+                    self.searchResults += its; self.recompute() }
+            },
+            done: { DispatchQueue.main.async { [weak self] in
+                guard let self = self, tok == self.searchToken else { return }
+                self.searching = false; self.recompute() } })
+    }
+    /// 快速路径 2：整台 Mac 名称搜索——searchfs(2) 扫 APFS 卷宗目录；不支持/出错回退 Spotlight
+    private func startCatalogSearch() {
+        let q = searchText, hidden = app?.showHidden ?? false, tok = searchToken
+        searchResults = []
+        FastSearch.catalogSearch(query: q, showHidden: hidden, limit: 2000, isCancelled: { [weak self] in self?.searchToken != tok },
+            onBatch: { [weak self] urls in
+                let its = urls.map(makeItem).filter {
+                    $0.name.localizedCaseInsensitiveContains(q) && (self?.clientMatch($0) ?? false)
+                }
+                DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
+                    self.searchResults += its; self.recompute() }
+            },
+            done: { ok in DispatchQueue.main.async { [weak self] in
+                guard let self = self, tok == self.searchToken else { return }
+                if !ok { self.startQuery(); return }
+                self.searching = false; self.recompute() } })
+    }
     private func stopQuery() {
+        searchToken += 1   // 同时作废进行中的枚举/卷宗搜索批
         query?.stop(); query = nil
         observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
     }

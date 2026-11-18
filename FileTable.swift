@@ -360,12 +360,12 @@ struct FileTable: NSViewRepresentable {
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-        func tableView(_ tv: NSTableView, isGroupRow row: Int) -> Bool { if case .header = rows[row] { return true }; return false }
+        func tableView(_ tv: NSTableView, isGroupRow row: Int) -> Bool { if row >= 0, row < rows.count, case .header = rows[row] { return true }; return false }
         func tableView(_ tv: NSTableView, shouldSelectRow row: Int) -> Bool { item(row) != nil }
         func tableView(_ tv: NSTableView, heightOfRow row: Int) -> CGFloat { item(row) == nil ? 26 : 22 }
 
         func tableView(_ tv: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
-            if case .header(let title, let n) = rows[row] {
+            if row >= 0, row < rows.count, case .header(let title, let n) = rows[row] {
                 let tf = NSTextField(labelWithString: "\(title)（\(n)）"); tf.font = .boldSystemFont(ofSize: 12)
                 let v = NSTableCellView(); v.addSubview(tf); tf.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([tf.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 8), tf.centerYAnchor.constraint(equalTo: v.centerYAnchor)])

@@ -553,6 +553,21 @@ final class UITestRunner {
         check("已存搜索恢复状态", t.criteria.count == 1 && !t.display.isEmpty && t.display.allSatisfy { $0.isFolderLike }, t.display.map { $0.name }.joined(separator: ","))
         app.savedSearches = []
         t.clearSearch(); await settle(0.4)
+        // 11c. 快速搜索：子文件夹→后台枚举；整台 Mac→searchfs 卷宗目录（不支持则回退 Spotlight）
+        t.searchScope = .subfolders; t.setSearch("最深处"); await settle(1.5)
+        check("子文件夹快速搜索找到嵌套结果", t.display.contains { $0.name == "最深处的文件.txt" }, t.display.map { $0.name }.joined(separator: ","))
+        t.searchScope = .mac; t.setSearch("最深处的文件")
+        for _ in 0..<40 { await settle(0.5); if !t.searching { break } }
+        check("整台 Mac 搜索找到结果（searchfs/回退）", t.display.contains { $0.name == "最深处的文件.txt" }, "cnt=\(t.display.count)")
+        t.searchScope = .folder; t.clearSearch(); await settle(0.4)
+        // 图标视图搜索：按种类分组 + 名称下显示位置
+        t.searchScope = .subfolders; t.viewMode = .icon; t.setSearch("文件"); await settle(1.0)
+        var icv: FBCollectionView?
+        func findCV(_ v: NSView) { if icv == nil, let c = v as? FBCollectionView, c.coord?.pane == app.active, !c.isHiddenOrHasHiddenAncestor { icv = c }; if icv == nil { v.subviews.forEach(findCV) } }
+        findCV(win.contentView!)
+        let icn = icv?.coord?.sections.count ?? 0
+        check("图标视图搜索结果按种类分组", icn >= 2 || (icn == 1 && t.display.count <= 1), "sections=\(icn) display=\(t.display.count)")
+        t.viewMode = .list; t.clearSearch(); await settle(0.4)
         // 11b. 搜索按钮折叠/展开（向工具栏发合成鼠标事件会影响 NSSplitView 分栏记忆，放所有截图之后）
         press("f", 3, .command); await settle(0.6)
         press("\u{1b}", 53); await settle(0.6)

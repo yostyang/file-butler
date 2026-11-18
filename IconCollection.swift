@@ -42,9 +42,19 @@ final class FBCollectionView: NSCollectionView {
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { }
 }
 
+/// 访达式位置缩写：/System/Volumes/Data 前缀去掉，家目录显示为 ~
+func abbrevPath(_ u: URL) -> String {
+    var p = u.path
+    if p.hasPrefix("/System/Volumes/Data/") { p = String(p.dropFirst("/System/Volumes/Data".count)) }
+    let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+    if p == home { return "~" }
+    if p.hasPrefix(home + "/") { return "~" + p.dropFirst(home.count) }
+    return p
+}
+
 final class IconItem: NSCollectionViewItem {
     static let id = NSUserInterfaceItemIdentifier("IconItem")
-    let bg = NSView(), iv = NSImageView(), label = NSTextField(wrappingLabelWithString: "")
+    let bg = NSView(), iv = NSImageView(), label = NSTextField(wrappingLabelWithString: ""), pathLabel = NSTextField(labelWithString: "")
     var url: URL?
     var thumbReq: QLThumbnailGenerator.Request?
     var dropTarget = false { didSet { updateLook() } }
@@ -56,7 +66,11 @@ final class IconItem: NSCollectionViewItem {
         label.font = .systemFont(ofSize: 11); label.alignment = .center; label.maximumNumberOfLines = 2
         label.lineBreakMode = .byTruncatingMiddle; label.cell?.truncatesLastVisibleLine = true
         label.wantsLayer = true; label.layer?.cornerRadius = 4
-        [bg, iv, label].forEach { v.addSubview($0) }
+        // 访达式：图标视图下搜索结果在名称下面显示所在文件夹
+        pathLabel.font = .systemFont(ofSize: 9); pathLabel.alignment = .center
+        pathLabel.textColor = .secondaryLabelColor; pathLabel.lineBreakMode = .byTruncatingMiddle
+        pathLabel.isHidden = true
+        [bg, iv, label, pathLabel].forEach { v.addSubview($0) }
         view = v
     }
     override var isSelected: Bool { didSet { updateLook() } }
@@ -79,11 +93,14 @@ final class IconItem: NSCollectionViewItem {
         let fit = label.sizeThatFits(NSSize(width: w - 6, height: 40))
         let lw = min(w - 2, fit.width + 8), lh = min(32, fit.height + 2)
         label.frame = NSRect(x: (w - lw) / 2, y: h - s - 10 - lh, width: lw, height: lh)
+        pathLabel.frame = NSRect(x: 4, y: 2, width: w - 8, height: 11)
     }
-    func configure(_ it: FileItem, size: CGFloat) {
+    func configure(_ it: FileItem, size: CGFloat, showPath: Bool = false) {
         if let r = thumbReq { QLThumbnailGenerator.shared.cancel(r); thumbReq = nil }
         url = it.url; iconSize = size
         label.stringValue = it.name; label.toolTip = it.name
+        pathLabel.isHidden = !showPath
+        if showPath { let p = abbrevPath(it.url.deletingLastPathComponent()); pathLabel.stringValue = p; pathLabel.toolTip = p }
         view.alphaValue = it.hidden ? 0.5 : 1
         iv.image = ThumbCache.listIcon(it)
         let bucket = size <= 64 ? 64 : size <= 128 ? 128 : 256
@@ -155,7 +172,7 @@ struct IconCollection: NSViewRepresentable {
         weak var cv: FBCollectionView?
         var sections: [(String, [FileItem])] = []
         var index: [URL: IndexPath] = [:]
-        var lastVersion = -1, lastSize: Double = -1, suppress = false
+        var lastVersion = -1, lastSize: Double = -1, lastSearch = false, suppress = false
         var ctrl: PaneController { app.controllers[pane] }
         init(app: AppState, tab: TabModel, pane: Int) { self.app = app; self.tab = tab; self.pane = pane }
 
@@ -166,11 +183,13 @@ struct IconCollection: NSViewRepresentable {
         var size: CGFloat { CGFloat(app.iconSize) }
         func sync() {
             guard let cv = cv else { return }
-            if lastVersion != tab.version || lastSize != app.iconSize {
+            if lastVersion != tab.version || lastSize != app.iconSize || lastSearch != tab.searchActive {
                 if editingURL != nil { return }
                 lastVersion = tab.version
-                if lastSize != app.iconSize { lastSize = app.iconSize; cv.collectionViewLayout?.invalidateLayout() }
-                sections = (tab.groupKey == .none || tab.isGlobalSearch) ? [("", tab.display)] : tab.groups
+                if lastSize != app.iconSize || lastSearch != tab.searchActive { lastSize = app.iconSize; lastSearch = tab.searchActive; cv.collectionViewLayout?.invalidateLayout() }
+                // 访达：图标视图搜索结果默认按种类分组
+                let gk: GroupKey = tab.searchActive ? (tab.groupKey == .none ? .kind : tab.groupKey) : tab.groupKey
+                sections = gk == .none ? [("", tab.display)] : (gk == tab.groupKey ? tab.groups : groupItems(tab.display, by: gk))
                 index = [:]
                 for (s, g) in sections.enumerated() { for (i, it) in g.1.enumerated() { index[it.url] = IndexPath(item: i, section: s) } }
                 suppress = true; cv.reloadData(); suppress = false
@@ -203,7 +222,7 @@ struct IconCollection: NSViewRepresentable {
         func collectionView(_ cv: NSCollectionView, numberOfItemsInSection s: Int) -> Int { sections[s].1.count }
         func collectionView(_ cv: NSCollectionView, itemForRepresentedObjectAt ip: IndexPath) -> NSCollectionViewItem {
             let v = cv.makeItem(withIdentifier: IconItem.id, for: ip) as! IconItem
-            if let it = item(ip) { v.configure(it, size: size); v.dropTarget = samePath(dropURL, it.url) }
+            if let it = item(ip) { v.configure(it, size: size, showPath: tab.searchActive); v.dropTarget = samePath(dropURL, it.url) }
             return v
         }
         func collectionView(_ cv: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind, at ip: IndexPath) -> NSView {
@@ -211,7 +230,7 @@ struct IconCollection: NSViewRepresentable {
             let g = sections[ip.section]; h.tf.stringValue = "\(g.0)（\(g.1.count)）"
             return h
         }
-        func collectionView(_ cv: NSCollectionView, layout: NSCollectionViewLayout, sizeForItemAt ip: IndexPath) -> NSSize { NSSize(width: size + 36, height: size + 8 + 40) }
+        func collectionView(_ cv: NSCollectionView, layout: NSCollectionViewLayout, sizeForItemAt ip: IndexPath) -> NSSize { NSSize(width: size + 36, height: size + 8 + 40 + (tab.searchActive ? 14 : 0)) }
         func collectionView(_ cv: NSCollectionView, layout: NSCollectionViewLayout, referenceSizeForHeaderInSection s: Int) -> NSSize {
             sections[s].0.isEmpty ? .zero : NSSize(width: cv.bounds.width, height: 26)
         }
