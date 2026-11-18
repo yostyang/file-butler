@@ -476,13 +476,8 @@ final class UITestRunner {
         let single = visibleCols(0)
         check("列表（单栏）：名称/修改日期/大小/种类列可见", ["name", "date", "size", "kind"].allSatisfy { single[$0] != nil }, single.map { "\($0.key)=\(Int($0.value))" }.sorted().joined(separator: " "))
         check("列宽规划：很窄时依次隐藏 种类 → 大小", FileTable.Coordinator.plan(avail: 330, enabled: ["date", "size", "kind"], search: false).map { $0.0 } == ["name", "date"])
-        // 7. ⌘F 搜索
+        // 7. 搜索框：⌘F 展开并聚焦
         press("f", 3, .command); await settle(0.6)
-        if TestEnv.debug {
-            func walk(_ v: NSView, _ d: Int) { if let t = v as? NSTextField { print("DEBUG tf \(Swift.type(of: t)) ph=\(String(describing: t.placeholderString)) pha=\(String(describing: t.placeholderAttributedString?.string)) ed=\(t.isEditable)") }; v.subviews.forEach { walk($0, d + 1) } }
-            walk(win.contentView!.superview!, 0)
-            for it in win.toolbar?.items ?? [] { if let v = it.view { walk(v, 0) } }
-        }
         let inSearch = (win.firstResponder as? NSTextView).map { ($0.delegate as? NSTextField)?.placeholderString == "搜索" } ?? false
         check("⌘F 聚焦搜索框", inSearch, String(describing: win.firstResponder))
         type("说明"); await settle(1.0)
@@ -492,6 +487,8 @@ final class UITestRunner {
         press("\u{1b}", 53); await settle(0.6)
         check("建议面板已关闭", !SearchSuggestions.shared.isVisible)
         t.clearSearch(); await settle(0.4)
+        // Esc 会收起搜索框；重新展开让后续截图与基线（展开态）一致
+        press("f", 3, .command); await settle(0.5)
         // 8. ⇧⌘P 预览
         let before = app.showPreview
         press("P", 35, [.command, .shift]); await settle(0.6)
@@ -556,6 +553,21 @@ final class UITestRunner {
         check("已存搜索恢复状态", t.criteria.count == 1 && !t.display.isEmpty && t.display.allSatisfy { $0.isFolderLike }, t.display.map { $0.name }.joined(separator: ","))
         app.savedSearches = []
         t.clearSearch(); await settle(0.4)
+        // 11b. 搜索按钮折叠/展开（向工具栏发合成鼠标事件会影响 NSSplitView 分栏记忆，放所有截图之后）
+        press("f", 3, .command); await settle(0.6)
+        press("\u{1b}", 53); await settle(0.6)
+        check("Esc 收起为放大镜按钮", searchField(in: win) == nil)
+        var sView: NSView?
+        for _ in 0..<20 {
+            sView = (win.toolbar?.items ?? []).filter { $0.view != nil && !$0.view!.isHidden }
+                .max { $0.view!.convert($0.view!.bounds, to: nil).maxX < $1.view!.convert($1.view!.bounds, to: nil).maxX }?.view
+            if sView != nil { break }
+            await settle(0.1)
+        }
+        check("折叠态搜索按钮存在且在最右", sView != nil && searchField(in: win) == nil, "sView=\(String(describing: sView)) field=\(String(describing: searchField(in: win)))")
+        if let iv = sView { click(iv.convert(NSPoint(x: iv.bounds.midX, y: iv.bounds.midY), to: nil)); await settle(0.8) }
+        check("点击放大镜展开并聚焦", searchField(in: win) != nil && (win.firstResponder as? NSTextView)?.delegate === searchField(in: win), "fr=\(String(describing: win.firstResponder)) field=\(String(describing: searchField(in: win)))")
+        press("\u{1b}", 53); await settle(0.6)
         writeChecklist()
     }
 

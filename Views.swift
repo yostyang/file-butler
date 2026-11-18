@@ -141,8 +141,29 @@ struct SearchBox: View {
     let tab: TabModel
     @ObservedObject var chrome: TabChrome
     @State var text = ""
+    @State var expanded = false
     @FocusState var focused: Bool
+    /// 访达行为：空闲时只显示放大镜按钮，点开（或 ⌘F）才展开成搜索框；有搜索词时保持展开
+    var collapsed: Bool { !expanded && text.isEmpty && !focused && chrome.tagFilter == nil }
     var body: some View {
+        Group {
+            if collapsed {
+                // 工具栏条件分支里的 Button 渲染出来但 action 接不上线（SwiftUI bug），改用手势
+                Image(systemName: "magnifyingglass")
+                    .frame(width: 30, height: 26)
+                    .contentShape(Rectangle())
+                    .onTapGesture { expand() }
+                    .help("搜索 ⌘F")
+            } else { field }
+        }
+        // 状态同步必须挂在始终存在的外层：折叠时 field 不在视图树里，挂它上面的 onChange 永远收不到事件
+        .onAppear { text = tab.searchText; if !text.isEmpty { expanded = true } }
+        .onChange(of: text) { if !$0.isEmpty { expanded = true }; tab.setSearch($0); updateSuggestions() }
+        .onChange(of: focused) { if !$0 { SearchSuggestions.shared.hide() } else { updateSuggestions() } }
+        .onChange(of: chrome.searchText) { if $0 != text { text = $0 } }
+        .onChange(of: app.searchFocus) { _ in expand() }
+    }
+    var field: some View {
         HStack(spacing: 4) {
             // 访达式放大镜菜单：最近的搜索
             Menu {
@@ -165,28 +186,28 @@ struct SearchBox: View {
                 .background(Capsule().fill(accentA.opacity(0.2)))
             }
             TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
-                .onExitCommand { text = ""; tab.clearSearch(); app.focusActiveTable() }
+                .onExitCommand { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
             if !text.isEmpty || chrome.tagFilter != nil {
-                Button { text = ""; tab.clearSearch(); app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
+                Button { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 7).frame(width: 210, height: 26)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(0.15), lineWidth: focused ? 1.5 : 1))
-        .onAppear { text = tab.searchText }
-        .onChange(of: text) { tab.setSearch($0); updateSuggestions() }
-        .onChange(of: focused) { if !$0 { SearchSuggestions.shared.hide() } else { updateSuggestions() } }
-        .onChange(of: chrome.searchText) { if $0 != text { text = $0 } }
-        .onChange(of: app.searchFocus) { _ in
-            focused = true
-            // 工具栏里的 SwiftUI 焦点有时不生效：直接把搜索框设为第一响应者
-            DispatchQueue.main.async {
+        .help("搜索 ⌘F")
+    }
+    /// 展开搜索框并聚焦（点放大镜按钮、⌘F、有搜索词时）
+    func expand() {
+        expanded = true
+        focused = true
+        // 工具栏里的 SwiftUI 焦点有时不生效：直接把搜索框设为第一响应者；刚展开的视图下一轮才进窗口，再试一次
+        for d in [0.0, 0.1] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + d) {
                 guard let w = app.responders[app.active].v?.window ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.toolbar != nil }) else { return }
                 if let tf = searchField(in: w), let w = tf.window, !(w.firstResponder is NSTextView && (w.firstResponder as? NSTextView)?.delegate === tf) { w.makeFirstResponder(tf) }
                 updateSuggestions()
             }
         }
-        .help("搜索 ⌘F")
     }
     /// 访达式搜索建议：输入时显示「名称匹配 / 内容包含」，空框显示最近的搜索
     func updateSuggestions() {
