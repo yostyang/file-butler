@@ -487,8 +487,10 @@ final class UITestRunner {
         check("⌘F 聚焦搜索框", inSearch, String(describing: win.firstResponder))
         type("说明"); await settle(1.0)
         check("搜索「说明」只显示匹配项", t.searchText == "说明" && t.display.map { $0.name } == ["说明.txt"], t.display.map { $0.name }.joined(separator: ","))
+        check("搜索建议面板弹出", SearchSuggestions.shared.isVisible)
         shot("ui-search")
         press("\u{1b}", 53); await settle(0.6)
+        check("建议面板已关闭", !SearchSuggestions.shared.isVisible)
         t.clearSearch(); await settle(0.4)
         // 8. ⇧⌘P 预览
         let before = app.showPreview
@@ -510,7 +512,11 @@ final class UITestRunner {
         check("视频预览：显示播放按钮", PlayButtonRegistry.marker?.window === win)
         let pr = paneRect(app.dual ? 1 : 0)
         let full = win.contentView!.superview!
+        if TestEnv.debug {
+            print("DEBUG vp pr=\(pr) fullW=\(full.bounds.width) cropW=\(full.bounds.width - pr.maxX - 1) dual=\(app.dual) search=\(t.searchActive) crit=\(t.criteria.count) saved=\(app.savedSearches.count)")
+        }
         let crop = NSRect(x: pr.maxX + 1, y: 30, width: full.bounds.width - pr.maxX - 1, height: full.bounds.height - 70)
+        if TestEnv.debug { print("DEBUG vp pr=\(pr) fullW=\(full.bounds.width) dual=\(app.dual)") }
         shot("video-preview", crop: crop)
         if let mk = PlayButtonRegistry.marker {
             let c = mk.convert(NSPoint(x: mk.bounds.midX, y: mk.bounds.midY), to: nil)
@@ -531,6 +537,25 @@ final class UITestRunner {
         await v06Tests()
         await v061Tests()
         await darkSnapshots()
+        // 11. 搜索增强（仿访达）：条件行、已存搜索。放在所有截图对比项之后——
+        //     侧栏「已存搜索」出现/消失会影响 NavigationSplitView 后续的分栏结果。
+        app.active = 0; t.clearSearch(); t.navigate(F); await settle(0.8)
+        t.criteria = [SearchCriterion(field: .kind, kind: "public.folder")]; await settle(0.6)
+        check("条件「种类=文件夹」", t.display.count >= 4 && t.display.allSatisfy { $0.isFolderLike }, t.display.map { $0.name }.joined(separator: ","))
+        let f1 = t.items.first { $0.name == "说明.txt" }!, f2 = t.items.first { $0.name == "数据.csv" }!
+        check("条件匹配：名称/大小/日期", matchCriterion(f1, SearchCriterion(field: .name, op: "contains", text: "说明"))
+            && matchCriterion(f2, SearchCriterion(field: .size, op: "smaller", number: 1, unit: 1024))
+            && !matchCriterion(f2, SearchCriterion(field: .size, op: "bigger", number: 1, unit: 1073741824))
+            && matchCriterion(f1, SearchCriterion(field: .modified, op: "before", date: Date())))
+        check("条件→Spotlight 谓词", SearchCriterion(field: .kind, kind: "public.image").spotlight != nil && SearchCriterion(field: .contents, text: "x").spotlight != nil)
+        app.savedSearches = []
+        app.saveCurrentSearch(name: "测试搜索")
+        check("存储搜索写入侧栏", app.savedSearches.contains { $0.name == "测试搜索" && $0.criteria.count == 1 })
+        t.clearSearch(); await settle(0.4)
+        if let s = app.savedSearches.first(where: { $0.name == "测试搜索" }) { app.runSaved(s); await settle(0.4) }
+        check("已存搜索恢复状态", t.criteria.count == 1 && !t.display.isEmpty && t.display.allSatisfy { $0.isFolderLike }, t.display.map { $0.name }.joined(separator: ","))
+        app.savedSearches = []
+        t.clearSearch(); await settle(0.4)
         writeChecklist()
     }
 

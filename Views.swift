@@ -144,34 +144,63 @@ struct SearchBox: View {
     @FocusState var focused: Bool
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            // 访达式放大镜菜单：最近的搜索
+            Menu {
+                if app.recentSearches.isEmpty { Text("没有最近搜索") }
+                else {
+                    ForEach(app.recentSearches, id: \.self) { s in Button(s) { text = s } }
+                    Divider()
+                    Button("清除最近搜索") { app.clearRecentSearches() }
+                }
+            } label: { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("最近的搜索")
+            // 选了「内容包含」后显示访达式 token，点 × 回到名称匹配
+            if chrome.matchMode == .contents {
+                HStack(spacing: 3) {
+                    Text("内容").font(.system(size: 11, weight: .medium))
+                    Button { tab.matchMode = .name } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }.buttonStyle(.plain)
+                }
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Capsule().fill(accentA.opacity(0.2)))
+            }
             TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
                 .onExitCommand { text = ""; tab.clearSearch(); app.focusActiveTable() }
             if !text.isEmpty || chrome.tagFilter != nil {
                 Button { text = ""; tab.clearSearch(); app.focusActiveTable() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 7).frame(width: 190, height: 26)
+        .padding(.horizontal, 7).frame(width: 210, height: 26)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(0.15), lineWidth: focused ? 1.5 : 1))
         .onAppear { text = tab.searchText }
-        .onChange(of: text) { tab.setSearch($0) }
+        .onChange(of: text) { tab.setSearch($0); updateSuggestions() }
+        .onChange(of: focused) { if !$0 { SearchSuggestions.shared.hide() } else { updateSuggestions() } }
         .onChange(of: chrome.searchText) { if $0 != text { text = $0 } }
         .onChange(of: app.searchFocus) { _ in
             focused = true
             // 工具栏里的 SwiftUI 焦点有时不生效：直接把搜索框设为第一响应者
             DispatchQueue.main.async {
                 guard let w = app.responders[app.active].v?.window ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.toolbar != nil }) else { return }
-                func find(_ v: NSView) -> NSTextField? {
-                    if let t = v as? NSTextField, t.isEditable, t.window != nil, (t.placeholderString ?? t.placeholderAttributedString?.string) == "搜索" { return t }
-                    for s in v.subviews { if let f = find(s) { return f } }
-                    return nil
-                }
-                let roots = [w.contentView?.superview].compactMap { $0 } + (w.toolbar?.items.compactMap { $0.view } ?? [])
-                if let tf = roots.lazy.compactMap(find).first, let w = tf.window, !(w.firstResponder is NSTextView && (w.firstResponder as? NSTextView)?.delegate === tf) { w.makeFirstResponder(tf) }
+                if let tf = searchField(in: w), let w = tf.window, !(w.firstResponder is NSTextView && (w.firstResponder as? NSTextView)?.delegate === tf) { w.makeFirstResponder(tf) }
+                updateSuggestions()
             }
         }
         .help("搜索 ⌘F")
+    }
+    /// 访达式搜索建议：输入时显示「名称匹配 / 内容包含」，空框显示最近的搜索
+    func updateSuggestions() {
+        // 只认 AppKit 第一响应者：SwiftUI FocusState 在 makeFirstResponder 路径下可能滞后
+        guard let w = app.responders[app.active].v?.window ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.toolbar != nil }),
+              let tf = searchField(in: w), (w.firstResponder as? NSTextView)?.delegate === tf else { SearchSuggestions.shared.hide(); return }
+        SearchSuggestions.shared.show(anchor: tf, text: text, recents: app.recentSearches) { item in
+            switch item.kind {
+            case .nameMatch: tab.matchMode = .name
+            case .contentsMatch: tab.matchMode = .contents
+            case .recent: text = item.query
+            }
+            app.recordSearch(item.query)
+        }
     }
 }
 
@@ -207,6 +236,24 @@ struct SidebarView: View {
                     }.buttonStyle(.plain)
                     .fontWeight(app.activeTab.tagFilter == t ? .semibold : .regular)
                     .help("用 Spotlight 查找带「\(t)」标签的文件")
+                }
+            }
+            if !app.savedSearches.isEmpty {
+                Section("已存搜索") {
+                    ForEach(app.savedSearches) { s in
+                        Button { app.runSaved(s) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                                Text(s.name).lineLimit(1)
+                                Spacer(minLength: 0)
+                            }.padding(.leading, 3).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        .help("\(s.text.isEmpty ? "" : "「\(s.text)」· ")\(s.scope.title)")
+                        .contextMenu {
+                            Button("重新命名…") { if let n = promptText(title: "重新命名搜索", message: "", initial: s.name), !n.isEmpty { app.renameSavedSearch(s, to: n) } }
+                            Button("移除") { app.removeSavedSearch(s) }
+                        }
+                    }
                 }
             }
             Section("位置") {
@@ -304,6 +351,7 @@ struct TabContent: View {
         VStack(spacing: 0) {
             if app.showPathBar || app.editingPane == index { PathBar(tab: tab, index: index) }
             if tab.searchActive { SearchScopeBar(tab: tab) }
+            if !tab.criteria.isEmpty { CriteriaEditor(tab: tab) }
             Divider()
             ZStack {
                 switch effectiveMode {
@@ -329,6 +377,7 @@ extension TabContent {
     var effectiveMode: ViewMode { tab.isGlobalSearch || (tab.searchActive && tab.viewMode == .column) ? .list : tab.viewMode }
 }
 struct SearchScopeBar: View {
+    @EnvironmentObject var app: AppState
     @ObservedObject var tab: TabModel
     var body: some View {
         HStack(spacing: 8) {
@@ -337,16 +386,87 @@ struct SearchScopeBar: View {
                 Text("标签「\(t)」（整台 Mac）").font(.system(size: 12, weight: .medium))
             } else {
                 Text("搜索：").font(.system(size: 12)).foregroundStyle(.secondary)
-                Picker("", selection: $tab.searchScope) { ForEach(SearchScope.allCases, id: \.self) { Text($0.title).tag($0) } }
+                // 与访达一致：文件夹范围直接显示当前文件夹的名字
+                Picker("", selection: $tab.searchScope) { ForEach(SearchScope.allCases, id: \.self) { Text($0 == .folder ? cachedDisplayName(tab.path.path) : $0.title).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
             }
             if tab.searching { ProgressView().controlSize(.small) }
             Text("\(tab.display.count) 个结果" + (tab.isGlobalSearch && tab.display.count >= 2000 ? "（只显示前 2000 个）" : "")).font(.caption).foregroundStyle(.secondary)
             Spacer()
+            Button { tab.addCriterion() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("添加搜索条件")
+            if tab.searching || tab.searchActive {
+                Button("存储") {
+                    if let n = promptText(title: "存储搜索", message: "把这个搜索保存到侧栏，以后点一下就重新执行。", initial: tab.searchText) { app.saveCurrentSearch(name: n, tab: tab) }
+                }.buttonStyle(.borderless).font(.caption).help("把当前搜索存为已存搜索")
+            }
             Button("清除") { tab.clearSearch() }.buttonStyle(.borderless).font(.caption)
         }.padding(.horizontal, 10).frame(height: 30).background(accentA.opacity(0.06))
     }
     var tagFilter: String? { tab.tagFilter }
+}
+
+// MARK: 搜索条件行（仿访达：每条「字段 运算符 值」，右侧 + − 增删）
+struct CriteriaEditor: View {
+    @ObservedObject var tab: TabModel
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach($tab.criteria) { $c in CriterionRow(tab: tab, c: $c) }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(accentA.opacity(0.06))
+    }
+}
+
+struct CriterionRow: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var tab: TabModel
+    @Binding var c: SearchCriterion
+    var body: some View {
+        HStack(spacing: 6) {
+            Picker("", selection: $c.field) { ForEach(CritField.allCases, id: \.self) { Text($0.title).tag($0) } }
+                .labelsHidden().fixedSize().controlSize(.small)
+                .onChange(of: c.field) { _ in c.resetForField() }
+            if c.field.ops.count > 1 {
+                Picker("", selection: $c.op) { ForEach(c.field.ops, id: \.0) { Text($0.1).tag($0.0) } }
+                    .labelsHidden().fixedSize().controlSize(.small)
+            } else {
+                Text(c.field.ops[0].1).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            valueView
+            Spacer()
+            Button { tab.criteria.insert(SearchCriterion(), at: (tab.criteria.firstIndex(where: { $0.id == c.id }) ?? 0) + 1) } label: { Image(systemName: "plus") }
+                .buttonStyle(.borderless).help("在它下面再加一条条件")
+            Button { tab.removeCriterion(c.id) } label: { Image(systemName: "minus") }
+                .buttonStyle(.borderless).help("去掉这条条件")
+        }.font(.system(size: 12))
+    }
+    @ViewBuilder var valueView: some View {
+        switch c.field {
+        case .name, .contents:
+            TextField("值", text: $c.text).textFieldStyle(.roundedBorder).frame(width: 150).controlSize(.small)
+        case .kind:
+            Picker("", selection: $c.kind) { ForEach(kindPresets, id: \.1) { Text($0.0).tag($0.1) } }
+                .labelsHidden().fixedSize().controlSize(.small)
+        case .modified, .created:
+            if c.op == "within" {
+                HStack(spacing: 4) {
+                    TextField("", value: $c.number, format: .number).textFieldStyle(.roundedBorder).frame(width: 48).controlSize(.small)
+                    Text("天内")
+                }
+            } else {
+                DatePicker("", selection: $c.date, displayedComponents: .date).labelsHidden().fixedSize().controlSize(.small)
+            }
+        case .size:
+            HStack(spacing: 4) {
+                TextField("", value: $c.number, format: .number).textFieldStyle(.roundedBorder).frame(width: 60).controlSize(.small)
+                Picker("", selection: $c.unit) { ForEach(sizeUnits, id: \.1) { Text($0.0).tag($0.1) } }
+                    .labelsHidden().fixedSize().controlSize(.small)
+            }
+        case .tag:
+            Picker("", selection: $c.text) { ForEach(app.allTags, id: \.self) { Text($0).tag($0) } }
+                .labelsHidden().fixedSize().controlSize(.small)
+        }
+    }
 }
 
 struct PermissionView: View {

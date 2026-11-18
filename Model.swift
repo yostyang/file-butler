@@ -20,8 +20,11 @@ enum ViewMode: String, CaseIterable { case icon, list, column, gallery
     var symbol: String { switch self { case .icon: return "square.grid.2x2"; case .list: return "list.bullet"; case .column: return "rectangle.split.3x1"; case .gallery: return "rectangle.bottomthird.inset.filled" } } }
 enum GroupKey: String, CaseIterable { case none, name, kind, date, size, tag
     var title: String { switch self { case .none: return "无"; case .name: return "名称"; case .kind: return "种类"; case .date: return "修改日期"; case .size: return "大小"; case .tag: return "标签" } } }
-enum SearchScope: String, CaseIterable { case folder, subfolders, mac
-    var title: String { switch self { case .folder: return "当前文件夹"; case .subfolders: return "包括子文件夹"; case .mac: return "整台 Mac" } } }
+enum SearchScope: String, Codable, CaseIterable { case folder, subfolders, mac
+    var title: String { switch self { case .folder: return "当前文件夹"; case .subfolders: return "包括子文件夹"; case .mac: return "这台 Mac" } } }
+/// 搜索匹配方式：访达的「名称匹配」/「内容包含」（内容必须走 Spotlight）
+enum SearchMatch: String, Codable, CaseIterable { case name, contents
+    var title: String { switch self { case .name: return "名称"; case .contents: return "内容" } } }
 
 let listKeys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .contentTypeKey, .isHiddenKey, .tagNamesKey]
 
@@ -307,6 +310,8 @@ final class TabModel: ObservableObject, Identifiable {
     @Published var groupKey: GroupKey = .none { didSet { recompute(); chrome.set(\.groupKey, groupKey) } }
     @Published var searchText = "" { didSet { chrome.set(\.searchText, searchText) } }
     @Published var searchScope: SearchScope = .folder { didSet { if searchScope != oldValue { refreshSearch() } } }
+    @Published var matchMode: SearchMatch = .name { didSet { if matchMode != oldValue { refreshSearch(); chrome.set(\.matchMode, matchMode) } } }
+    @Published var criteria: [SearchCriterion] = [] { didSet { if criteria != oldValue { criteriaChanged() } } }
     @Published var tagFilter: String? { didSet { chrome.set(\.tagFilter, tagFilter) } }
     /// 工具栏只观察这个小对象：选中、列表内容变化时工具栏不重排（大目录 ⌘A、批量操作不卡）
     let chrome = TabChrome()
@@ -351,8 +356,11 @@ final class TabModel: ObservableObject, Identifiable {
         if viewMode == .column, let c = columnChain.last { return c }
         return path
     }
-    var isGlobalSearch: Bool { tagFilter != nil || (!searchText.isEmpty && searchScope != .folder) }
-    var searchActive: Bool { tagFilter != nil || !searchText.isEmpty }
+    /// 这些条件只能靠 Spotlight 完成（访达也一样）：搜内容、或加了「内容」条件行。
+    /// 此时即使范围是「当前文件夹」，也用 Spotlight 在该文件夹内递归搜索（与访达的文件夹范围一致）。
+    var needsSpotlight: Bool { tagFilter != nil || matchMode == .contents || criteria.contains { $0.field == .contents } }
+    var isGlobalSearch: Bool { tagFilter != nil || (searchActive && (searchScope != .folder || needsSpotlight)) }
+    var searchActive: Bool { tagFilter != nil || !searchText.isEmpty || !criteria.isEmpty }
     var selectedItems: [FileItem] {
         guard !selection.isEmpty else { return [] }
         fillCaches()
@@ -406,10 +414,14 @@ final class TabModel: ObservableObject, Identifiable {
         UserDefaults.standard.set(sortKey.rawValue, forKey: "sortKey"); UserDefaults.standard.set(asc, forKey: "sortAsc")
     }
     func recompute() {
-        if isGlobalSearch { display = sortItems(searchResults, key: sortKey, asc: asc) }
-        else if !searchText.isEmpty { display = items.filter { $0.name.localizedCaseInsensitiveContains(searchText) } }
+        if isGlobalSearch { display = sortItems(searchResults.filter(clientMatch), key: sortKey, asc: asc) }
+        else if searchActive { display = items.filter { (searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText)) && clientMatch($0) } }
         else { display = items }
         version += 1
+    }
+    /// 客户端逐条套用搜索条件。「内容」条件由 Spotlight 谓词承担，客户端不重复读文件。
+    func clientMatch(_ it: FileItem) -> Bool {
+        criteria.allSatisfy { $0.field == .contents || matchCriterion(it, $0) }
     }
     /// Click selection with ⌘ / ⇧ modifiers, used by icon, column and gallery views.
     func click(_ u: URL, order: [URL]) {
@@ -513,8 +525,16 @@ final class TabModel: ObservableObject, Identifiable {
             self.startQuery()
         }
     }
-    func showTag(_ t: String) { searchText = ""; tagFilter = t; selection = []; refreshSearch() }
-    func clearSearch() { searchText = ""; tagFilter = nil; stopQuery(); searchResults = []; searching = false; recompute() }
+    func showTag(_ t: String) { searchText = ""; matchMode = .name; criteria = []; tagFilter = t; selection = []; refreshSearch() }
+    func clearSearch() { searchText = ""; matchMode = .name; tagFilter = nil; criteria = []; stopQuery(); searchResults = []; searching = false; recompute() }
+    func criteriaChanged() { if isGlobalSearch { refreshSearch() } else { recompute() } }
+    func addCriterion() { criteria.append(SearchCriterion()) }
+    func removeCriterion(_ id: UUID) { criteria.removeAll { $0.id == id } }
+    /// 侧栏「已存搜索」点开：把整套搜索状态搬到当前栏（访达智能文件夹行为）
+    func applySaved(_ s: SavedSearch) {
+        matchMode = s.matchMode; criteria = s.criteria; searchScope = s.scope; tagFilter = nil; selection = []
+        searchText = s.text; refreshSearch()
+    }
     private func stopQuery() {
         query?.stop(); query = nil
         observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
@@ -523,10 +543,19 @@ final class TabModel: ObservableObject, Identifiable {
         stopQuery()
         let q = NSMetadataQuery()
         if let t = tagFilter {
-            q.predicate = NSPredicate(format: "kMDItemUserTags == %@", t)
+            q.predicate = criteria.isEmpty ? NSPredicate(format: "kMDItemUserTags == %@", t)
+                : NSCompoundPredicate(andPredicateWithSubpredicates: [NSPredicate(format: "kMDItemUserTags == %@", t)] + criteria.compactMap { $0.spotlight })
             q.searchScopes = [NSMetadataQueryLocalComputerScope]
         } else {
-            q.predicate = NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(searchText)*")
+            var preds: [NSPredicate] = []
+            if !searchText.isEmpty {
+                preds.append(matchMode == .contents
+                    ? NSPredicate(format: "kMDItemTextContent CONTAINS[cd] %@", searchText)
+                    : NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(searchText)*"))
+            }
+            preds += criteria.compactMap { $0.spotlight }
+            q.predicate = preds.isEmpty ? NSPredicate(value: true)
+                : (preds.count == 1 ? preds[0] : NSCompoundPredicate(andPredicateWithSubpredicates: preds))
             q.searchScopes = searchScope == .mac ? [NSMetadataQueryLocalComputerScope] : [path]
         }
         let nc = NotificationCenter.default
@@ -563,6 +592,7 @@ final class TabChrome: ObservableObject {
     @Published var asc = true
     @Published var searchText = ""
     @Published var tagFilter: String?
+    @Published var matchMode: SearchMatch = .name
     @Published var hasSelection = false
     func set<T: Equatable>(_ k: ReferenceWritableKeyPath<TabChrome, T>, _ v: T) { if self[keyPath: k] != v { self[keyPath: k] = v } }
 }
@@ -602,6 +632,8 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(iconSize, forKey: "iconSize") } }
     @Published var bookmarks: [URL] = []
     @Published var recents: [URL] = []
+    @Published var recentSearches: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+    @Published var savedSearches: [SavedSearch] = []
     @Published var volumes: [VolumeInfo] = []
     @Published var customTags: [String] = UserDefaults.standard.stringArray(forKey: "customTags") ?? []
     @Published var alert: AlertInfo?
@@ -643,6 +675,7 @@ final class AppState: ObservableObject {
         favorites = f
         bookmarks = (ud.stringArray(forKey: "bookmarks") ?? []).map { URL(fileURLWithPath: $0) }
         recents = (ud.stringArray(forKey: "recents") ?? []).map { URL(fileURLWithPath: $0) }
+        if let d = ud.data(forKey: "savedSearches") { savedSearches = (try? JSONDecoder().decode([SavedSearch].self, from: d)) ?? [] }
         var ps: [PaneModel] = []
         for i in 0..<2 {
             let saved = ud.stringArray(forKey: "pane\(i)Tabs") ?? [], modes = ud.stringArray(forKey: "pane\(i)Modes") ?? []
@@ -763,6 +796,29 @@ final class AppState: ObservableObject {
         bookmarks.append(u); ud.set(bookmarks.map { $0.path }, forKey: "bookmarks")
     }
     func removeBookmark(_ u: URL) { bookmarks.removeAll { $0.path == u.path }; ud.set(bookmarks.map { $0.path }, forKey: "bookmarks") }
+    // MARK: 最近搜索 / 已存搜索（仿访达：搜索建议、智能文件夹）
+    func recordSearch(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        recentSearches.removeAll { $0 == t }; recentSearches.insert(t, at: 0)
+        if recentSearches.count > 10 { recentSearches.removeLast() }
+        ud.set(recentSearches, forKey: "recentSearches")
+    }
+    func clearRecentSearches() { recentSearches = []; ud.removeObject(forKey: "recentSearches") }
+    func saveCurrentSearch(name: String, tab: TabModel? = nil) {
+        let t = tab ?? activeTab
+        let s = SavedSearch(name: name.isEmpty ? (t.searchText.isEmpty ? "未命名搜索" : t.searchText) : name,
+                            text: t.searchText, scope: t.searchScope, matchMode: t.matchMode, criteria: t.criteria)
+        savedSearches.removeAll { $0.name == s.name }; savedSearches.append(s); persistSearches()
+        recordSearch(t.searchText)
+    }
+    func removeSavedSearch(_ s: SavedSearch) { savedSearches.removeAll { $0.id == s.id }; persistSearches() }
+    func renameSavedSearch(_ s: SavedSearch, to name: String) {
+        guard let i = savedSearches.firstIndex(where: { $0.id == s.id }) else { return }
+        savedSearches[i].name = name; persistSearches()
+    }
+    private func persistSearches() { ud.set(try? JSONEncoder().encode(savedSearches), forKey: "savedSearches") }
+    func runSaved(_ s: SavedSearch) { activeTab.applySaved(s); focusActiveTable() }
     func refreshVolumes() {
         let keys: [URLResourceKey] = [.volumeLocalizedNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
         let urls = fm.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
