@@ -148,7 +148,8 @@ struct SearchBox: View {
     var body: some View {
         // 单一容器 + 宽度动画 = 访达式放大镜滑开成搜索框；容器始终挂载，状态同步不会丢
         HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            // 折叠态和其他工具栏图标同号，展开后退为框内小图标
+            Image(systemName: "magnifyingglass").font(.system(size: collapsed ? 17 : 12)).foregroundStyle(.secondary)
                 .contentShape(Rectangle())
                 // 折叠：点按展开；展开：点按呼出搜索建议（含最近搜索），替代访达放大镜菜单
                 .onTapGesture { expand() }
@@ -174,9 +175,10 @@ struct SearchBox: View {
                 }
             }
         }
-        .padding(.horizontal, collapsed ? 6 : 7).frame(width: collapsed ? 30 : 210, height: 26)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .textBackgroundColor).opacity(collapsed ? 0 : 1)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? accentA : Color.primary.opacity(collapsed ? 0 : 0.15), lineWidth: focused ? 1.5 : 1))
+        .padding(.horizontal, collapsed ? 6 : 7).frame(width: collapsed ? 30 : 190, height: 22)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor).opacity(collapsed ? 0 : 1)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(focused ? accentA : Color.primary.opacity(collapsed ? 0 : 0.15), lineWidth: focused ? 1.5 : 1))
+        .clipped()
         .contentShape(Rectangle())
         .onTapGesture { if collapsed { expand() } }
         .animation(.snappy(duration: 0.2), value: collapsed)

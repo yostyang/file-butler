@@ -309,7 +309,8 @@ final class TabModel: ObservableObject, Identifiable {
     @Published var viewMode: ViewMode { didSet { app?.saveState(); chrome.set(\.viewMode, viewMode) } }
     @Published var groupKey: GroupKey = .none { didSet { recompute(); chrome.set(\.groupKey, groupKey) } }
     @Published var searchText = "" { didSet { chrome.set(\.searchText, searchText) } }
-    @Published var searchScope: SearchScope = .folder { didSet { if searchScope != oldValue { refreshSearch() } } }
+    /// 与访达一致：默认搜「这台 Mac」
+    @Published var searchScope: SearchScope = .mac { didSet { if searchScope != oldValue { refreshSearch() } } }
     @Published var matchMode: SearchMatch = .name { didSet { if matchMode != oldValue { refreshSearch(); chrome.set(\.matchMode, matchMode) } } }
     @Published var criteria: [SearchCriterion] = [] { didSet { if criteria != oldValue { criteriaChanged() } } }
     @Published var tagFilter: String? { didSet { chrome.set(\.tagFilter, tagFilter) } }

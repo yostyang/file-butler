@@ -476,7 +476,8 @@ final class UITestRunner {
         let single = visibleCols(0)
         check("列表（单栏）：名称/修改日期/大小/种类列可见", ["name", "date", "size", "kind"].allSatisfy { single[$0] != nil }, single.map { "\($0.key)=\(Int($0.value))" }.sorted().joined(separator: " "))
         check("列宽规划：很窄时依次隐藏 种类 → 大小", FileTable.Coordinator.plan(avail: 330, enabled: ["date", "size", "kind"], search: false).map { $0.0 } == ["name", "date"])
-        // 7. 搜索框：⌘F 展开并聚焦
+        // 7. 搜索框：⌘F 展开并聚焦（钉住「当前文件夹」范围，默认范围是这台 Mac）
+        t.searchScope = .folder
         press("f", 3, .command); await settle(0.6)
         let inSearch = (win.firstResponder as? NSTextView).map { ($0.delegate as? NSTextField)?.placeholderString == "搜索" } ?? false
         check("⌘F 聚焦搜索框", inSearch, String(describing: win.firstResponder))
@@ -536,7 +537,7 @@ final class UITestRunner {
         await darkSnapshots()
         // 11. 搜索增强（仿访达）：条件行、已存搜索。放在所有截图对比项之后——
         //     侧栏「已存搜索」出现/消失会影响 NavigationSplitView 后续的分栏结果。
-        app.active = 0; t.clearSearch(); t.navigate(F); await settle(0.8)
+        app.active = 0; t.clearSearch(); t.navigate(F); t.searchScope = .folder; await settle(0.8)
         t.criteria = [SearchCriterion(field: .kind, kind: "public.folder")]; await settle(0.6)
         check("条件「种类=文件夹」", t.display.count >= 4 && t.display.allSatisfy { $0.isFolderLike }, t.display.map { $0.name }.joined(separator: ","))
         let f1 = t.items.first { $0.name == "说明.txt" }!, f2 = t.items.first { $0.name == "数据.csv" }!
