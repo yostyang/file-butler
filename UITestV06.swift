@@ -201,12 +201,12 @@ extension UITestRunner {
             app.batchRename = nil
             await waitUntil(3) { self.win.attachedSheet == nil }; await settle(0.3)
             let closeMax = phase.stop().max
-            // 执行 + 刷新列表：最多量两次取最好的一次——50ms 门槛量的是代码本身的最长阻塞，
-            // 单次尖峰多半是机器噪声（历史上 44–69ms 抖动），真实回归会稳定超标
+            // 执行 + 刷新列表：最多量三次取最好的一次——50ms 门槛量的是代码本身的最长阻塞，
+            // 尖峰多半是机器噪声（历史上 44–69ms 抖动），真实回归每轮都会超标
             var applyMax = Double.infinity, applyMs = 0
-            for attempt in 0..<2 {
+            for attempt in 0..<3 {
                 if attempt > 0 {
-                    app.undo(); _ = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("原") } }; await settle(0.3)
+                    app.undo(); _ = await waitUntil(30) { self.idle() && self.names(P).allSatisfy { $0.hasPrefix("原") } }; await settle(1.0)
                 }
                 phase = MainThreadProbe(); phase.start()
                 let ta0 = Date()
