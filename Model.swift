@@ -556,7 +556,7 @@ final class TabModel: ObservableObject, Identifiable {
                 DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
                     self.searchResults += its; self.recompute() }
             },
-            done: { DispatchQueue.main.async { [weak self] in
+            done: { [weak self] in DispatchQueue.main.async {
                 guard let self = self, tok == self.searchToken else { return }
                 self.searching = false; self.recompute() } })
     }
@@ -572,7 +572,7 @@ final class TabModel: ObservableObject, Identifiable {
                 DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
                     self.searchResults += its; self.recompute() }
             },
-            done: { ok in DispatchQueue.main.async { [weak self] in
+            done: { [weak self] ok in DispatchQueue.main.async {
                 guard let self = self, tok == self.searchToken else { return }
                 if !ok { self.startQuery(); return }
                 self.searching = false; self.recompute() } })
@@ -1060,9 +1060,10 @@ final class AppState: ObservableObject {
         guard !urls.isEmpty else { return }
         let p = beginOp(mode == .move ? "移动" : "拷贝", count: urls.count, kind: (mode == .move || (mode == .auto && sameVolume(urls[0], dir))) ? .move : .copy, first: urls[0].lastPathComponent, dest: dir.lastPathComponent)
         let srcDirs = Array(Set(urls.map { $0.deletingLastPathComponent() }))
-        opQueue.async {
-            let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { [weak self] n, mv in self?.askConflict(n, move: mv, multi: p.conflictsLeft > 1) ?? (.stop, false) })
+        opQueue.async { [weak self] in
+            let r = FileOps.transfer(urls, to: dir, mode: mode, progress: p, resolve: { n, mv in self?.askConflict(n, move: mv, multi: p.conflictsLeft > 1) ?? (.stop, false) })
             DispatchQueue.main.async {
+                guard let self = self else { return }
                 self.endOp(p); resetDisplayNames()
                 var ops: [UndoOp] = []
                 if !r.replaced.isEmpty { ops.append(.trashed(r.replaced)) }

@@ -136,34 +136,39 @@ enum QuickActions {
     }
     /// 向左旋转视频：只改轨道的显示方向（不重新编码，和访达一样快、不损失画质）
     static func rotateVideoLeft(_ u: URL, done: @escaping (Result<URL, Error>) -> Void) {
-        let asset = AVURLAsset(url: u)
-        let comp = AVMutableComposition()
-        do {
-            let dur = CMTimeRange(start: .zero, duration: asset.duration)
-            for t in asset.tracks {
-                guard let ct = comp.addMutableTrack(withMediaType: t.mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
-                try ct.insertTimeRange(dur, of: t, at: .zero)
-                if t.mediaType == .video {
-                    let n = t.naturalSize
-                    // 逆时针 90°：(x, y) -> (y, -x)，再平移回正区域
-                    let rot = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 0)
-                    let cur = t.preferredTransform
-                    let r = CGRect(origin: .zero, size: n).applying(cur)
-                    var tr = cur.concatenating(rot)
-                    let r2 = r.applying(rot)
-                    tr = tr.concatenating(CGAffineTransform(translationX: -r2.minX, y: -r2.minY))
-                    ct.preferredTransform = tr
+        Task {
+            let asset = AVURLAsset(url: u)
+            let comp = AVMutableComposition()
+            do {
+                let assetDur = try await asset.load(.duration)
+                let dur = CMTimeRange(start: .zero, duration: assetDur)
+                let tracks = try await asset.load(.tracks)
+                for t in tracks {
+                    guard let ct = comp.addMutableTrack(withMediaType: t.mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+                    try ct.insertTimeRange(dur, of: t, at: .zero)
+                    if t.mediaType == .video {
+                        let (n, cur) = try await t.load(.naturalSize, .preferredTransform)
+                        // 逆时针 90°：(x, y) -> (y, -x)，再平移回正区域
+                        let rot = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 0)
+                        let r = CGRect(origin: .zero, size: n).applying(cur)
+                        var tr = cur.concatenating(rot)
+                        let r2 = r.applying(rot)
+                        tr = tr.concatenating(CGAffineTransform(translationX: -r2.minX, y: -r2.minY))
+                        ct.preferredTransform = tr
+                    }
                 }
+            } catch { DispatchQueue.main.async { done(.failure(error)) }; return }
+            guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough) else {
+                DispatchQueue.main.async { done(.failure(FBError("无法旋转视频。"))) }; return
             }
-        } catch { done(.failure(error)); return }
-        guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough) else { done(.failure(FBError("无法旋转视频。"))); return }
-        let tmp = u.deletingLastPathComponent().appendingPathComponent(".fb-rotate-\(UUID().uuidString).\(u.pathExtension)")
-        ex.outputURL = tmp
-        ex.outputFileType = u.pathExtension.lowercased() == "mov" ? .mov : .mp4
-        ex.exportAsynchronously {
+            let tmp = u.deletingLastPathComponent().appendingPathComponent(".fb-rotate-\(UUID().uuidString).\(u.pathExtension)")
+            ex.outputURL = tmp
+            ex.outputFileType = u.pathExtension.lowercased() == "mov" ? .mov : .mp4
+            await ex.export()
+            let ok = ex.status == .completed, err = ex.error
             DispatchQueue.main.async {
-                if ex.status == .completed { done(Result { try swapIn(tmp, for: u) }) }
-                else { try? FileManager.default.removeItem(at: tmp); done(.failure(ex.error ?? FBError("无法旋转视频。"))) }
+                if ok { done(Result { try swapIn(tmp, for: u) }) }
+                else { try? FileManager.default.removeItem(at: tmp); done(.failure(err ?? FBError("无法旋转视频。"))) }
             }
         }
     }
@@ -190,8 +195,9 @@ struct FinderInfoView: View {
     @State var more = false
     @State var tagPop = false
     @State var busy = false
+    @State private var avInfo: (URL, MediaInfo)?
     var body: some View {
-        let m = mediaInfo(item.url)
+        let m = avInfo?.0 == item.url ? avInfo!.1 : mediaInfo(item.url)
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -226,6 +232,11 @@ struct FinderInfoView: View {
                     .disabled(tab.selectedURLs.isEmpty)
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task(id: item.url) {
+            let base = mediaInfo(item.url)
+            let loaded = await loadAVMediaInfo(item.url, base: base)
+            if !Task.isCancelled { avInfo = (item.url, loaded) }
         }
         if !item.isFolderLike { Divider(); actions.padding(.vertical, 8) }
     }

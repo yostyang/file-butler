@@ -425,18 +425,29 @@ struct GalleryView: View {
 struct MediaInfo { var dims: String?; var duration: String?; var seconds: Double? }
 func mediaInfo(_ u: URL) -> MediaInfo {
     var r = spotlightMediaInfo(u)
-    // Spotlight 没有索引到（新文件、/tmp 等）时直接读文件
+    // Spotlight 没有索引到（新文件、/tmp 等）时直接读图片头
     if r.dims == nil, isImageFile(u), let s = CGImageSourceCreateWithURL(u as CFURL, nil),
        let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any],
        let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int { r.dims = "\(w) × \(h)" }
-    if isAVMedia(u), r.seconds == nil || (isVideo(u) && r.dims == nil) {
-        let a = AVURLAsset(url: u)
-        let s = CMTimeGetSeconds(a.duration)
-        if s.isFinite, s > 0 { r.seconds = s }
-        if let t = a.tracks(withMediaType: .video).first {
-            let sz = t.naturalSize.applying(t.preferredTransform)
-            r.dims = "\(Int(abs(sz.width))) × \(Int(abs(sz.height)))"
+    return r
+}
+/// 音视频未进 Spotlight 索引时，异步读取时长与尺寸（避免主线程同步阻塞与已弃用的 AVAsset 属性）
+func loadAVMediaInfo(_ u: URL, base: MediaInfo) async -> MediaInfo {
+    var r = base
+    guard isAVMedia(u), r.seconds == nil || (isVideo(u) && r.dims == nil) else { return r }
+    let a = AVURLAsset(url: u)
+    if r.seconds == nil, let dur = try? await a.load(.duration) {
+        let s = CMTimeGetSeconds(dur)
+        if s.isFinite, s > 0 {
+            r.seconds = s
+            let sec = Int(s.rounded())
+            r.duration = sec >= 3600 ? String(format: "%d:%02d:%02d", sec / 3600, sec / 60 % 60, sec % 60) : String(format: "%d:%02d", sec / 60, sec % 60)
         }
+    }
+    if isVideo(u), r.dims == nil, let t = (try? await a.loadTracks(withMediaType: .video))?.first,
+       let (nat, tr) = try? await t.load(.naturalSize, .preferredTransform) {
+        let sz = nat.applying(tr)
+        r.dims = "\(Int(abs(sz.width))) × \(Int(abs(sz.height)))"
     }
     return r
 }
@@ -459,8 +470,9 @@ func permString(_ u: URL) -> String {
 struct MetaView: View {
     let item: FileItem
     var compactButtons = false
+    @State private var avInfo: (URL, MediaInfo)?
     var body: some View {
-        let m = mediaInfo(item.url)
+        let m = avInfo?.0 == item.url ? avInfo!.1 : mediaInfo(item.url)
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 Text(item.name.isEmpty ? "/" : item.name).font(.headline).textSelection(.enabled)
@@ -479,6 +491,11 @@ struct MetaView: View {
                     Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
                 }.controlSize(.small)
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task(id: item.url) {
+            let base = mediaInfo(item.url)
+            let loaded = await loadAVMediaInfo(item.url, base: base)
+            if !Task.isCancelled { avInfo = (item.url, loaded) }
         }
     }
     func row(_ k: String, _ v: String) -> some View {

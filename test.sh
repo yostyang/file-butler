@@ -3,8 +3,10 @@
 #   1. 编译（通用版 + 固定签名）  2. --selftest 文件操作自测
 #   3. --uitest 在应用进程内驱动自己的界面（右键菜单、路径栏、新建文件夹+就地重命名、拷贝粘贴、废纸篓+撤销、⌘1-4、⌘F、⇧⌘P）并截图
 #   4. 截图与 Tests/golden/ 里人工确认过的基准图对比
-#   用法：./test.sh            正常测试
-#         ./test.sh --approve  把本次截图设为新的基准图（必须先人工检查截图）
+#   用法：./test.sh                正常测试（需要本机图形界面）
+#         ./test.sh --selftest-only  仅编译 + 文件操作自测（适用于 CI / 无图形界面）
+#         ./test.sh --approve        把本次截图设为新的基准图（必须先人工检查截图）
+#   环境变量：FB_REQUIRE_SIGNING=1   要求验证签名证书哈希（发布时由 release.sh 开启）
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT=build-test/ui; mkdir -p build-test
@@ -12,8 +14,15 @@ APP="build/文件管家.app/Contents/MacOS/FileButler"
 restore() { [ -f /tmp/fb-ui-defaults-backup.plist ] && defaults import com.yost.filebutler /tmp/fb-ui-defaults-backup.plist && rm -f /tmp/fb-ui-defaults-backup.plist || true; }
 trap restore EXIT
 echo "== 1/4 编译 =="; ./build.sh > build-test/build.log 2>&1 || { tail -30 build-test/build.log; echo "编译失败"; exit 1; }
-grep -q 'certificate leaf = H"f84b9654f42df2c8bfdd75f7eaf123a7525d060c"' build-test/build.log || { echo "签名身份不对（会导致权限失效）"; exit 1; }
+if [ -n "${FB_REQUIRE_SIGNING:-}" ]; then
+  CERT_HASH="${FB_SIGNING_CERT_HASH:-f84b9654f42df2c8bfdd75f7eaf123a7525d060c}"
+  grep -q "certificate leaf = H\"$CERT_HASH\"" build-test/build.log || { echo "签名身份不对（会导致权限失效）"; exit 1; }
+fi
 echo "== 2/4 文件操作自测 =="; "$APP" --selftest | tee build-test/selftest.log | grep -E "FAIL|结果"; grep -q "0 失败" build-test/selftest.log
+if [ "${1:-}" = "--selftest-only" ]; then
+  echo "✅ 编译与文件操作自测全部通过"
+  exit 0
+fi
 echo "== 3/4 界面测试 =="
 "$APP" --uitest "$PWD/$OUT" > build-test/uitest.log 2>&1 & P=$!
 for i in $(seq 1 600); do kill -0 $P 2>/dev/null || break; sleep 1; done
