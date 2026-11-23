@@ -8,11 +8,11 @@ final class ShelfModel: ObservableObject {
     @Published private(set) var items: [URL] = []
     @Published var visible = false
     let storeKey: String
-    init(storeKey: String = "shelfItems") {
+    init(storeKey: String = Settings.Key.shelfItems) {
         self.storeKey = storeKey
-        items = (UserDefaults.standard.stringArray(forKey: storeKey) ?? []).map { URL(fileURLWithPath: $0) }.filter { FileOps.lexists($0.path) }
+        items = Settings.stringList(forKey: storeKey).map { URL(fileURLWithPath: $0) }.filter { FileOps.lexists($0.path) }
     }
-    private func save() { UserDefaults.standard.set(items.map { $0.path }, forKey: storeKey) }
+    private func save() { Settings.setStringList(items.map { $0.path }, forKey: storeKey) }
     /// 加入（按路径去重）。返回新加入的数量。
     @discardableResult func add(_ urls: [URL]) -> Int {
         var n = 0

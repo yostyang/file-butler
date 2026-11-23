@@ -175,18 +175,18 @@ struct FileTable: NSViewRepresentable {
         var laying = false
         static let optional: [(String, String, CGFloat)] = [("date", "修改日期", 140), ("size", "大小", 72), ("kind", "种类", 120)]
         static var enabledCols: Set<String> {
-            get { Set(UserDefaults.standard.stringArray(forKey: "listColumns") ?? ["date", "size", "kind"]) }
-            set { UserDefaults.standard.set(Array(newValue), forKey: "listColumns") }
+            get { Settings.listColumns }
+            set { Settings.listColumns = newValue }
         }
         static func preferredWidth(_ id: String, _ def: CGFloat) -> CGFloat {
-            let w = UserDefaults.standard.double(forKey: "listColW_\(id)"); return w > 30 ? CGFloat(w) : def
+            Settings.columnWidth(id, default: def)
         }
         @objc func clipResized() { layoutColumns() }
         @objc func columnResized(_ n: Notification) {
             // 用户拖动列宽：记住非名称列的宽度
             guard !laying, let tv = table, let hv = tv.headerView, hv.resizedColumn >= 0,
                   let col = (n.userInfo?["NSTableColumn"] as? NSTableColumn), col.identifier.rawValue != "name" else { return }
-            UserDefaults.standard.set(Double(col.width), forKey: "listColW_\(col.identifier.rawValue)")
+            Settings.setColumnWidth(col.identifier.rawValue, col.width)
             DispatchQueue.main.async { self.layoutColumns() }
         }
         /// 纯函数：给定可用宽度，返回要显示的列和宽度
@@ -231,8 +231,7 @@ struct FileTable: NSViewRepresentable {
             NotificationCenter.default.post(name: .fbColumnsChanged, object: nil)
         }
         @objc func resetCols() {
-            for (id, _, _) in Coordinator.optional { UserDefaults.standard.removeObject(forKey: "listColW_\(id)") }
-            UserDefaults.standard.removeObject(forKey: "listColW_path")
+            Settings.resetColumnWidths(ids: Coordinator.optional.map { $0.0 })
             NotificationCenter.default.post(name: .fbColumnsChanged, object: nil)
         }
 

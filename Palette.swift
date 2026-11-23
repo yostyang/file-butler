@@ -84,6 +84,7 @@ enum PaletteEngine {
         add("空间分析", "disk usage size 空间", "chart.pie", "⌥⌘S") { app.sizeReq = SizeReq(url: tab.path) }
         add("把当前文件夹加入书签", "bookmark 书签", "bookmark", "⇧⌘B") { app.addBookmark() }
         if !app.undoStack.isEmpty { add("撤销上一步文件操作", "undo 撤销", "arrow.uturn.backward", "⌥⌘Z") { app.undo() } }
+        if !app.redoStack.isEmpty { add("重做上一步文件操作", "redo 重做", "arrow.uturn.forward", "⌥⇧⌘Z") { app.redo() } }
         add("前往：个人", "home 个人", "house", "⇧⌘H") { app.go(home) }
         add("前往：桌面", "desktop 桌面", "menubar.dock.rectangle", "⇧⌘D") { app.go(home.appendingPathComponent("Desktop")) }
         add("前往：下载", "downloads 下载", "arrow.down.circle", "⌥⌘L") { app.go(home.appendingPathComponent("Downloads")) }

@@ -46,8 +46,17 @@ enum SelfTest {
         do {
             let r = try FileOps.rename(f1, to: "renamed.txt")
             check("重命名", exists(r) && !exists(f1) && text(r) == "hello")
-            try FileOps.undo(.rename(f1, r))
+            let u1 = try FileOps.undoWithInverse(.rename(f1, r))
             check("撤销重命名", exists(f1) && !exists(r))
+            _ = try FileOps.undoWithInverse(u1.inverse)
+            check("重做重命名", exists(r) && !exists(f1) && text(r) == "hello")
+            try FileOps.undo(.rename(f1, r))
+            check("再次撤销重命名", exists(f1) && !exists(r))
+            let st = AppState()
+            for _ in 0..<(AppState.maxUndoDepth + 12) { st.recordUndo(.created([])) }
+            st.redoStack.append(.created([]))
+            st.recordUndo(.created([]))
+            check("撤销栈上限（\(AppState.maxUndoDepth)）与新操作清空重做栈", st.undoStack.count == AppState.maxUndoDepth && st.redoStack.isEmpty)
             check("拒绝含 / 的名称", (try? FileOps.rename(f1, to: "a/b")) == nil)
             check("拒绝与已有项目重名", (try? FileOps.rename(f1, to: "dir1")) == nil && exists(f1))
         } catch { check("重命名", false, error.localizedDescription) }

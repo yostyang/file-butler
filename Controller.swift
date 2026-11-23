@@ -82,6 +82,7 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
         // 访达：⌘C 之后按 ⌥⌘V = 移动到这里
         if f == [.command, .option], e.charactersIgnoringModifiers?.lowercased() == "v" { app.paste(into: pasteDir, forceMove: true); return true }
+        if f == [.command, .shift], e.charactersIgnoringModifiers?.lowercased() == "z" { app.redo(); return true }
         guard f == .command else { return false }
         switch e.keyCode {
         case 51: app.trash(tab.selectedURLs); return true

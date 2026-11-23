@@ -44,6 +44,7 @@ struct FileButlerApp: App {
             }
             CommandGroup(after: .undoRedo) {
                 Button("撤销上一步文件操作") { app.undo() }.keyboardShortcut("z", modifiers: [.command, .option])
+                Button("重做上一步文件操作") { app.redo() }.keyboardShortcut("z", modifiers: [.command, .option, .shift])
             }
             CommandMenu("操作") {
                 Button("打开所选") { app.activeController.openSelection() }.keyboardShortcut(.downArrow)

@@ -36,7 +36,7 @@ struct ContentView: View {
             #if FB_TESTING
             if TestEnv.active { UITestRunner.start(app: app); return }
             #endif
-            if !hasFullDiskAccess() && !UserDefaults.standard.bool(forKey: "fdaPromptDismissed") {
+            if !hasFullDiskAccess() && !Settings.fdaPromptDismissed {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { app.showFDA = true }
             }
         }
@@ -748,7 +748,7 @@ struct FDASheet: View {
                 Text("授权会一直有效，以后更新文件管家也不用重新授权。").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                if !granted { Button("以后再说") { UserDefaults.standard.set(true, forKey: "fdaPromptDismissed"); dismiss() } }
+                if !granted { Button("以后再说") { Settings.fdaPromptDismissed = true; dismiss() } }
                 Spacer()
                 if granted { Button("好") { dismiss() }.keyboardShortcut(.defaultAction) }
                 else { Button("打开系统设置") { NSWorkspace.shared.open(fdaURL) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(accentA) }

@@ -1,650 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
-
-let accentA = Color(red: 0.42, green: 0.36, blue: 0.98), accentB = Color(red: 0.18, green: 0.70, blue: 0.96)
-let accentGrad = LinearGradient(colors: [accentA, accentB], startPoint: .topLeading, endPoint: .bottomTrailing)
-let fdaURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
-
-struct FileItem: Hashable {
-    let url: URL; let name: String; let isDir: Bool; let isPackage: Bool
-    let size: Int64; let modified: Date?; let created: Date?; let kind: String; let hidden: Bool
-    let tags: [String]
-    var isFolderLike: Bool { isDir && !isPackage }
-}
-enum SortKey: String, CaseIterable { case name, kind, date, size
-    var title: String { switch self { case .name: return "名称"; case .kind: return "种类"; case .date: return "修改日期"; case .size: return "大小" } } }
-enum TransferMode { case auto, copy, move }
-enum ViewMode: String, CaseIterable { case icon, list, column, gallery
-    var title: String { switch self { case .icon: return "图标"; case .list: return "列表"; case .column: return "分栏"; case .gallery: return "画廊" } }
-    var symbol: String { switch self { case .icon: return "square.grid.2x2"; case .list: return "list.bullet"; case .column: return "rectangle.split.3x1"; case .gallery: return "rectangle.bottomthird.inset.filled" } } }
-enum GroupKey: String, CaseIterable { case none, name, kind, date, size, tag
-    var title: String { switch self { case .none: return "无"; case .name: return "名称"; case .kind: return "种类"; case .date: return "修改日期"; case .size: return "大小"; case .tag: return "标签" } } }
-enum SearchScope: String, Codable, CaseIterable { case folder, subfolders, mac
-    var title: String { switch self { case .folder: return "当前文件夹"; case .subfolders: return "包括子文件夹"; case .mac: return "这台 Mac" } } }
-/// 搜索匹配方式：访达的「名称匹配」/「内容包含」（内容必须走 Spotlight）
-enum SearchMatch: String, Codable, CaseIterable { case name, contents
-    var title: String { switch self { case .name: return "名称"; case .contents: return "内容" } } }
-
-let listKeys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .contentTypeKey, .isHiddenKey, .tagNamesKey]
-
-// 种类名称按文件类型缓存：比逐个文件读取 localizedTypeDescription 快得多
-private let kindLock = NSLock()
-private var kindCache: [String: String] = [:]
-func kindName(_ t: UTType?, isDir: Bool, isPackage: Bool) -> String {
-    if isDir && !isPackage { return "文件夹" }
-    guard let t = t else { return "文稿" }
-    kindLock.lock(); defer { kindLock.unlock() }
-    if let k = kindCache[t.identifier] { return k }
-    let k = t.localizedDescription ?? t.preferredFilenameExtension.map { "\($0.uppercased()) 文件" } ?? "文稿"
-    kindCache[t.identifier] = k
-    return k
-}
-
-let listKeySet = Set(listKeys)
-func makeItem(_ raw: URL) -> FileItem { makeItem(raw, standardize: true) }
-func makeItem(_ raw: URL, standardize: Bool) -> FileItem {
-    var u = standardize ? raw.standardizedFileURL : raw
-    let v = try? u.resourceValues(forKeys: listKeySet)
-    u.removeAllCachedResourceValues()   // 不让每个 URL 一直挂着属性缓存，省内存
-    let isDir = v?.isDirectory ?? false, isPkg = v?.isPackage ?? false
-    return FileItem(url: u, name: u.lastPathComponent, isDir: isDir, isPackage: isPkg,
-                    size: Int64(v?.fileSize ?? 0), modified: v?.contentModificationDate, created: v?.creationDate,
-                    kind: kindName(v?.contentType, isDir: isDir, isPackage: isPkg), hidden: v?.isHidden ?? u.lastPathComponent.hasPrefix("."), tags: v?.tagNames ?? [])
-}
-
-/// 在后台线程调用：列出目录并读取需要的属性。
-func loadDirectory(_ p: URL, hidden: Bool) -> (items: [FileItem], err: String?, denied: Bool) {
-    do {
-        let dir = p.standardizedFileURL
-        let urls = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: listKeys, options: hidden ? [] : [.skipsHiddenFiles])
-        // 目录本身已规范化，子项不必再逐个 standardize
-        return (urls.map { makeItem($0, standardize: false) }, nil, false)
-    } catch { return ([], error.localizedDescription, isPermissionError(error)) }
-}
-
-func sortItems(_ a: [FileItem], key: SortKey, asc: Bool) -> [FileItem] {
-    a.sorted { x, y in
-        let byName = x.name.localizedStandardCompare(y.name) == .orderedAscending
-        let r: Bool
-        switch key {
-        case .name: r = byName
-        case .size: r = x.size == y.size ? byName : x.size < y.size
-        case .date: r = (x.modified ?? .distantPast) < (y.modified ?? .distantPast)
-        case .kind: r = x.kind == y.kind ? byName : x.kind.localizedStandardCompare(y.kind) == .orderedAscending
-        }
-        return asc ? r : !r
-    }
-}
-
-// MARK: tags
-let standardTags: [(String, NSColor)] = [("红色", .systemRed), ("橙色", .systemOrange), ("黄色", .systemYellow), ("绿色", .systemGreen), ("蓝色", .systemBlue), ("紫色", .systemPurple), ("灰色", .systemGray)]
-let englishTags = ["Red": 0, "Orange": 1, "Yellow": 2, "Green": 3, "Blue": 4, "Purple": 5, "Gray": 6, "Grey": 6]
-func tagColor(_ name: String) -> NSColor? {
-    if let i = standardTags.firstIndex(where: { $0.0 == name }) { return standardTags[i].1 }
-    if let i = englishTags[name] { return standardTags[i].1 }
-    return nil
-}
-
-// MARK: grouping
-func groupItems(_ items: [FileItem], by k: GroupKey) -> [(String, [FileItem])] {
-    guard k != .none else { return [("", items)] }
-    let cal = Calendar.current, now = Date()
-    func label(_ it: FileItem) -> (String, Int) {
-        switch k {
-        case .none: return ("", 0)
-        case .name:
-            let c = it.name.first.map { String($0).uppercased() } ?? "#"
-            return (c.rangeOfCharacter(from: .letters) != nil ? c : "#", 0)
-        case .kind: return (it.isFolderLike ? "文件夹" : (it.kind.isEmpty ? "其他" : it.kind), it.isFolderLike ? 0 : 1)
-        case .date:
-            guard let d = it.modified else { return ("未知", 9) }
-            if cal.isDateInToday(d) { return ("今天", 0) }
-            if cal.isDateInYesterday(d) { return ("昨天", 1) }
-            let days = now.timeIntervalSince(d) / 86400
-            if days < 7 { return ("过去 7 天", 2) }
-            if days < 30 { return ("过去 30 天", 3) }
-            if cal.component(.year, from: d) == cal.component(.year, from: now) { return ("今年早些时候", 4) }
-            return ("\(cal.component(.year, from: d)) 年", 10000 - cal.component(.year, from: d))
-        case .size:
-            if it.isFolderLike { return ("文件夹", 0) }
-            let s = it.size
-            if s >= 1 << 30 { return ("大于 1 GB", 1) }
-            if s >= 100 << 20 { return ("100 MB – 1 GB", 2) }
-            if s >= 1 << 20 { return ("1 MB – 100 MB", 3) }
-            if s >= 100 << 10 { return ("100 KB – 1 MB", 4) }
-            return ("小于 100 KB", 5)
-        case .tag: return it.tags.first.map { ($0, 0) } ?? ("无标签", 1)
-        }
-    }
-    var dict: [String: [FileItem]] = [:], rank: [String: Int] = [:]
-    for it in items { let (l, r) = label(it); dict[l, default: []].append(it); rank[l] = r }
-    return dict.keys.sorted { (rank[$0]!, $0) < (rank[$1]!, $1) }.map { ($0, dict[$0]!) }
-}
-
-let byteFmt: ByteCountFormatter = { let f = ByteCountFormatter(); f.countStyle = .file; return f }()
-func fmtBytes(_ b: Int64) -> String { byteFmt.string(fromByteCount: b) }
-let dateFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; return f }()
-func fmtDate(_ d: Date?) -> String { d.map { dateFmt.string(from: $0) } ?? "--" }
-
-func isPermissionError(_ e: Error) -> Bool {
-    let n = e as NSError
-    if n.domain == NSCocoaErrorDomain && (n.code == NSFileReadNoPermissionError || n.code == NSFileWriteNoPermissionError) { return true }
-    if let u = n.userInfo[NSUnderlyingErrorKey] as? NSError, u.domain == NSPOSIXErrorDomain, u.code == Int(EPERM) || u.code == Int(EACCES) { return true }
-    return false
-}
-func sameVolume(_ a: URL, _ b: URL) -> Bool {
-    let k: Set<URLResourceKey> = [.volumeIdentifierKey]
-    guard let x = (try? a.resourceValues(forKeys: k))?.volumeIdentifier, let y = (try? b.resourceValues(forKeys: k))?.volumeIdentifier else { return false }
-    return x.isEqual(y)
-}
-func uniqueCopyURL(in dir: URL, name: String) -> URL { uniqueURL(in: dir, name: name, copy: true) }
-func uniqueURL(in dir: URL, name: String, copy: Bool, taken: ((URL) -> Bool)? = nil) -> URL {
-    let fm = FileManager.default
-    let isTaken: (URL) -> Bool = taken ?? { fm.fileExists(atPath: $0.path) }
-    var u = dir.appendingPathComponent(name)
-    if !isTaken(u) { return u }
-    var ext = (name as NSString).pathExtension, base = (name as NSString).deletingPathExtension
-    if name.hasSuffix(".zip") && !copy { ext = "zip"; base = String(name.dropLast(4)) }
-    var i = copy ? 1 : 2
-    while true {
-        let b = copy ? (i == 1 ? "\(base) 副本" : "\(base) 副本 \(i)") : "\(base) \(i)"
-        u = dir.appendingPathComponent(ext.isEmpty ? b : "\(b).\(ext)")
-        if !isTaken(u) { return u }
-        i += 1
-    }
-}
-func copyPaths(_ urls: [URL]) {
-    let pb = NSPasteboard.general; pb.clearContents(); pb.setString(urls.map { $0.path }.joined(separator: "\n"), forType: .string)
-}
-func freeSpace(_ u: URL) -> Int64? {
-    guard let v = try? u.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]) else { return nil }
-    return v.volumeAvailableCapacityForImportantUsage
-}
-
-struct FBError: LocalizedError { let msg: String; init(_ m: String) { msg = m }; var errorDescription: String? { msg } }
-indirect enum UndoOp { case rename(URL, URL), moved([(URL, URL)]), trashed([(URL, URL)]), created([URL]), group([UndoOp]), renamedBatch([(URL, URL)]) }
-
-// MARK: - Pure file operations (also used by --selftest)
-enum FileOps {
-    static let fm = FileManager.default
-    /// 移到废纸篓：用系统的 trashItem（可「放回原处」、同名自动改名）。
-    /// 按文件名分 4 路并行：同名的项目总在同一路里依次处理，不会在废纸篓里抢同一个名字。
-    static func trash(_ urls: [URL], progress: OpProgress? = nil) -> (done: [(URL, URL)], errs: [String], perm: Bool) {
-        progress?.markRunning()
-        progress?.total = urls.count
-        let lanes = min(4, max(1, urls.count))
-        var buckets = [[Int]](repeating: [], count: lanes)
-        for (i, u) in urls.enumerated() { buckets[abs(u.lastPathComponent.lowercased().hashValue) % lanes].append(i) }
-        var out = [(URL?, String?, Bool)](repeating: (nil, nil, false), count: urls.count)
-        out.withUnsafeMutableBufferPointer { ob in
-            let o = ob
-            DispatchQueue.concurrentPerform(iterations: lanes) { k in
-                for i in buckets[k] {
-                    if progress?.isCancelled == true { return }
-                    defer { progress?.step() }
-                    do {
-                        var res: NSURL?
-                        try fm.trashItem(at: urls[i], resultingItemURL: &res)
-                        o[i] = (res as URL?, nil, false)
-                    } catch { o[i] = (nil, "「\(urls[i].lastPathComponent)」：\(error.localizedDescription)", isPermissionError(error)) }
-                }
-            }
-        }
-        var done: [(URL, URL)] = [], errs: [String] = [], perm = false
-        for (i, r) in out.enumerated() {
-            if let t = r.0 { done.append((urls[i], t)) }
-            if let e = r.1 { errs.append(e); perm = perm || r.2 }
-        }
-        return (done, errs, perm)
-    }
-    static func newFolder(in dir: URL) throws -> URL {
-        var name = "未命名文件夹", i = 2
-        while fm.fileExists(atPath: dir.appendingPathComponent(name).path) { name = "未命名文件夹 \(i)"; i += 1 }
-        let u = dir.appendingPathComponent(name)
-        try fm.createDirectory(at: u, withIntermediateDirectories: false)
-        return u
-    }
-    /// 访达的「用所选项目新建文件夹」：在第一个项目所在的文件夹里新建「新建文件夹包含项目」，把所选项目移进去。
-    static func newFolderWithItems(_ urls: [URL]) throws -> (folder: URL, moved: [(URL, URL)]) {
-        guard let first = urls.first else { throw FBError("没有选中项目。") }
-        let dir = first.deletingLastPathComponent()
-        var name = "新建文件夹包含项目", i = 2
-        while fm.fileExists(atPath: dir.appendingPathComponent(name).path) { name = "新建文件夹包含项目 \(i)"; i += 1 }
-        let folder = dir.appendingPathComponent(name)
-        try fm.createDirectory(at: folder, withIntermediateDirectories: false)
-        var moved: [(URL, URL)] = []
-        do {
-            for u in urls { let dst = folder.appendingPathComponent(u.lastPathComponent); try fm.moveItem(at: u, to: dst); moved.append((u, dst)) }
-        } catch {
-            for (a, b) in moved.reversed() { try? fm.moveItem(at: b, to: a) }
-            try? fm.removeItem(at: folder)
-            throw error
-        }
-        return (folder, moved)
-    }
-    /// 访达的「制作替身」：写入 alias（书签）文件，命名为「X 的替身」。
-    static func makeAlias(_ u: URL) throws -> URL {
-        let data = try u.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
-        let dir = u.deletingLastPathComponent()
-        var name = "\(u.lastPathComponent) 的替身", i = 2
-        while fm.fileExists(atPath: dir.appendingPathComponent(name).path) { name = "\(u.lastPathComponent) 的替身 \(i)"; i += 1 }
-        let dst = dir.appendingPathComponent(name)
-        try URL.writeBookmarkData(data, to: dst)
-        return dst
-    }
-    static func rename(_ u: URL, to name: String) throws -> URL {
-        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !n.isEmpty else { throw FBError("名称不能为空。") }
-        if n.contains("/") || n.contains(":") { throw FBError("名称不能包含“/”或“:”。") }
-        let dst = u.deletingLastPathComponent().appendingPathComponent(n)
-        if fm.fileExists(atPath: dst.path) && dst.path.lowercased() != u.path.lowercased() { throw FBError("名称“\(n)”已被使用。请选取一个不同的名称。") }
-        try fm.moveItem(at: u, to: dst)
-        return dst
-    }
-    /// Returns the Trash locations of anything the undo moved to the Trash.
-    @discardableResult static func undo(_ op: UndoOp) throws -> [URL] {
-        switch op {
-        case .rename(let a, let b): try fm.moveItem(at: b, to: a)
-        case .moved(let pairs): for (a, b) in pairs.reversed() { try fm.moveItem(at: b, to: a) }
-        case .renamedBatch(let pairs): try BatchRename.undo(pairs)   // 整批一次改回（两步改名，互换名称也安全）
-        case .trashed(let pairs): for (a, b) in pairs { try fm.moveItem(at: b, to: a) }
-        case .group(let ops):
-            var out: [URL] = []
-            for op in ops.reversed() { out += try undo(op) }
-            return out
-        case .created(let urls):
-            var out: [URL] = []
-            for u in urls { var r: NSURL?; try fm.trashItem(at: u, resultingItemURL: &r); if let r = r as URL? { out.append(r) } }
-            return out
-        }
-        return []
-    }
-    static func readTags(_ u: URL) -> [String] {
-        let fresh = URL(fileURLWithPath: u.path)
-        return (try? fresh.resourceValues(forKeys: [.tagNamesKey]))?.tagNames ?? []
-    }
-    static func setTags(_ u: URL, _ tags: [String]) throws {
-        try (URL(fileURLWithPath: u.path) as NSURL).setResourceValue(tags, forKey: .tagNamesKey)
-    }
-    static func zip(_ urls: [URL]) throws -> URL {
-        guard let first = urls.first else { throw FBError("没有选中项目。") }
-        let dir = first.deletingLastPathComponent().standardizedFileURL
-        guard urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL.path == dir.path }) else { throw FBError("只能压缩同一个文件夹里的项目。") }
-        let p = Process(), errPipe = Pipe()
-        let out: URL
-        if urls.count == 1 {
-            out = uniqueURL(in: dir, name: first.lastPathComponent + ".zip", copy: false)
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            p.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", first.path, out.path]
-        } else {
-            out = uniqueURL(in: dir, name: "归档.zip", copy: false)
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-            p.currentDirectoryURL = dir
-            // 文件名前加「./」：以「-」开头的文件名不会被 zip 当成命令行选项（zip 存档时会去掉「./」）
-            p.arguments = ["-r", "-y", "-q", out.path] + urls.map { "./" + $0.lastPathComponent }
-        }
-        p.standardError = errPipe; p.standardOutput = FileHandle.nullDevice
-        try p.run()
-        // 先读完错误输出再等进程结束：输出超过管道缓冲区（约 64 KB）时，先等会互相卡死
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else {
-            try? fm.removeItem(at: out)   // 不留半截压缩包
-            let msg = String(data: errData, encoding: .utf8) ?? ""
-            throw FBError("压缩失败（\(p.terminationStatus)）：\(msg)")
-        }
-        return out
-    }
-}
-
-// MARK: - Tab
-final class TabModel: ObservableObject, Identifiable {
-    let id = UUID()
-    @Published var path: URL
-    @Published var items: [FileItem] = []
-    @Published var display: [FileItem] = []
-    @Published var loading = false
-    @Published var error: String?
-    @Published var permissionDenied = false
-    @Published var selection: Set<URL> = [] { didSet { if selection != oldValue { app?.selectionDidChange(self); let has = !selection.isEmpty
-        // 工具栏按钮的可用状态放到下一轮刷新（不和列表的大批量更新挤在同一帧）
-        if has != chrome.hasSelection { DispatchQueue.main.async { [weak self] in guard let self = self else { return }; self.chrome.set(\.hasSelection, !self.selection.isEmpty) } } } } }
-    @Published var version = 0
-    @Published var viewMode: ViewMode { didSet { app?.saveState(); chrome.set(\.viewMode, viewMode) } }
-    @Published var groupKey: GroupKey = .none { didSet { recompute(); chrome.set(\.groupKey, groupKey) } }
-    @Published var searchText = "" { didSet { chrome.set(\.searchText, searchText) } }
-    /// 与访达一致：默认搜「这台 Mac」
-    @Published var searchScope: SearchScope = .mac { didSet { if searchScope != oldValue { refreshSearch() } } }
-    @Published var matchMode: SearchMatch = .name { didSet { if matchMode != oldValue { refreshSearch(); chrome.set(\.matchMode, matchMode) } } }
-    @Published var criteria: [SearchCriterion] = [] { didSet { if criteria != oldValue { criteriaChanged() } } }
-    @Published var tagFilter: String? { didSet { chrome.set(\.tagFilter, tagFilter) } }
-    /// 工具栏只观察这个小对象：选中、列表内容变化时工具栏不重排（大目录 ⌘A、批量操作不卡）
-    let chrome = TabChrome()
-    @Published var searchResults: [FileItem] = []
-    @Published var searching = false
-    /// 分栏视图的各栏内容（键盘导航读取；视图持有，这里弱引用）
-    weak var columnLoader: ColumnLoader?
-    @Published var columnChain: [URL] = []
-    var back: [URL] = [], fwd: [URL] = []
-    var sortKey: SortKey = .name { didSet { chrome.set(\.sortKey, sortKey) } }
-    var asc = true { didSet { chrome.set(\.asc, asc) } }
-    var anchor: URL?
-    var freeBytes: Int64?
-    private var cacheVersion = -1
-    private var groupsCache: [(String, [FileItem])] = []
-    private var orderCache: [URL] = []
-    private var indexCache: [URL: Int] = [:]
-    private func fillCaches() {
-        guard cacheVersion != version else { return }
-        cacheVersion = version
-        groupsCache = groupItems(display, by: groupKey)
-        orderCache = groupsCache.flatMap { $0.1 }.map { $0.url }
-        indexCache = Dictionary(display.enumerated().map { ($0.element.url, $0.offset) }, uniquingKeysWith: { a, _ in a })
-    }
-    /// 分组结果按 version 缓存，选择变化时不再重新分组
-    var groups: [(String, [FileItem])] { fillCaches(); return groupsCache }
-    var groupedOrder: [URL] { fillCaches(); return orderCache }
-    weak var app: AppState?
-    private var loadToken = 0, pending = false, searchToken = 0
-    private var watcher: DispatchSourceFileSystemObject?, watchedPath = ""
-    private var query: NSMetadataQuery?
-    private var observers: [NSObjectProtocol] = []
-
-    var title: String {
-        if let t = tagFilter { return "标签：\(t)" }
-        let p = viewMode == .column ? (columnChain.last ?? path) : path
-        return p.path == "/" ? "/" : cachedDisplayName(p.path)
-    }
-    /// 路径栏显示的目标（访达行为）：分栏视图里是最深的选中项；其他视图是当前文件夹 + 单个选中项。
-    var pathTarget: URL {
-        if tagFilter == nil, selection.count == 1, let s = selection.first { return s }
-        if viewMode == .column, let c = columnChain.last { return c }
-        return path
-    }
-    /// 这些条件只能靠 Spotlight 完成（访达也一样）：搜内容、或加了「内容」条件行。
-    /// 此时即使范围是「当前文件夹」，也用 Spotlight 在该文件夹内递归搜索（与访达的文件夹范围一致）。
-    var needsSpotlight: Bool { tagFilter != nil || matchMode == .contents || criteria.contains { $0.field == .contents } }
-    var isGlobalSearch: Bool { tagFilter != nil || (searchActive && (searchScope != .folder || needsSpotlight)) }
-    var searchActive: Bool { tagFilter != nil || !searchText.isEmpty || !criteria.isEmpty }
-    var selectedItems: [FileItem] {
-        guard !selection.isEmpty else { return [] }
-        fillCaches()
-        var inDisplay: [(Int, FileItem)] = [], rest: [URL] = []
-        for u in selection { if let i = indexCache[u] { inDisplay.append((i, display[i])) } else { rest.append(u) } }
-        return inDisplay.sorted { $0.0 < $1.0 }.map { $0.1 } + rest.sorted { $0.path < $1.path }.filter { FileManager.default.fileExists(atPath: $0.path) }.map(makeItem)
-    }
-    /// 状态栏用的选中摘要：只查已加载的列表，不逐个读取磁盘（大量选中时也不卡）
-    var selectionSummary: (count: Int, size: Int64, hasFolder: Bool) {
-        guard !selection.isEmpty else { return (0, 0, false) }
-        fillCaches()
-        var size: Int64 = 0, folder = false
-        for u in selection { if let i = indexCache[u] { let it = display[i]; if it.isFolderLike { folder = true } else { size += it.size } } }
-        return (selection.count, size, folder)
-    }
-    var selectedURLs: [URL] {
-        guard !selection.isEmpty else { return [] }
-        fillCaches()
-        var inDisplay: [(Int, URL)] = [], rest: [URL] = []
-        for u in selection { if let i = indexCache[u] { inDisplay.append((i, u)) } else { rest.append(u) } }
-        return inDisplay.sorted { $0.0 < $1.0 }.map { $0.1 } + rest.sorted { $0.path < $1.path }
-    }
-
-    init(path: URL, app: AppState, mode: ViewMode = .list) {
-        self.path = path.standardizedFileURL; self.app = app; self.viewMode = mode
-        if let k = SortKey(rawValue: UserDefaults.standard.string(forKey: "sortKey") ?? "") { sortKey = k }
-        if UserDefaults.standard.object(forKey: "sortAsc") != nil { asc = UserDefaults.standard.bool(forKey: "sortAsc") }
-        chrome.viewMode = mode; chrome.sortKey = sortKey; chrome.asc = asc
-        reload()
-    }
-    deinit { watcher?.cancel(); query?.stop(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
-
-    func navigate(_ url: URL, record: Bool = true) {
-        let u = url.standardizedFileURL
-        if searchActive { clearSearch() }
-        guard u.path != path.path else { reload(); return }
-        if record { back.append(path); fwd.removeAll() }
-        path = u; selection = []; error = nil; permissionDenied = false; columnChain = []
-        reload(); app?.visited(u)
-    }
-    func goBack() { guard let p = back.popLast() else { NSSound.beep(); return }; fwd.append(path); path = p; selection = []; columnChain = []; reload(); app?.visited(p) }
-    func goForward() { guard let p = fwd.popLast() else { NSSound.beep(); return }; back.append(path); path = p; selection = []; columnChain = []; reload(); app?.visited(p) }
-    func goUp() {
-        let p = path.deletingLastPathComponent()
-        guard p.path != path.path else { NSSound.beep(); return }
-        let old = path; navigate(p); selection = [old]
-    }
-    func setSort(_ k: SortKey, asc a: Bool) { sortKey = k; asc = a; resort() }
-    func resort() {
-        items = sortItems(items, key: sortKey, asc: asc); recompute()
-        UserDefaults.standard.set(sortKey.rawValue, forKey: "sortKey"); UserDefaults.standard.set(asc, forKey: "sortAsc")
-    }
-    func recompute() {
-        if isGlobalSearch { display = sortItems(searchResults.filter(clientMatch), key: sortKey, asc: asc) }
-        else if searchActive { display = items.filter { (searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText)) && clientMatch($0) } }
-        else { display = items }
-        version += 1
-    }
-    /// 客户端逐条套用搜索条件。「内容」条件由 Spotlight 谓词承担，客户端不重复读文件。
-    func clientMatch(_ it: FileItem) -> Bool {
-        criteria.allSatisfy { $0.field == .contents || matchCriterion(it, $0) }
-    }
-    /// Click selection with ⌘ / ⇧ modifiers, used by icon, column and gallery views.
-    func click(_ u: URL, order: [URL]) {
-        let f = NSEvent.modifierFlags
-        if f.contains(.command) { if selection.contains(u) { selection.remove(u) } else { selection.insert(u) }; anchor = u }
-        else if f.contains(.shift), let a = anchor, let i = order.firstIndex(of: a), let j = order.firstIndex(of: u) {
-            selection = Set(order[min(i, j)...max(i, j)])
-        } else { selection = [u]; anchor = u }
-    }
-    func reload() {
-        pruneMissing()
-        // 分栏视图里右侧各栏的列表也一起重读（以前只重读第一栏，右侧栏留着已经移走的旧内容）
-        if viewMode == .column, let l = columnLoader { for c in columnChain { l.load(c, hidden: app?.showHidden ?? false, sortKey: sortKey, asc: asc) } }
-        loadToken += 1; let tok = loadToken, p = path, hidden = app?.showHidden ?? false
-        // 只有列表为空时才显示「加载中」（避免每次刷新都多一轮界面重绘）
-        if items.isEmpty && !loading { loading = true }
-        let key = sortKey, ascending = asc
-        DispatchQueue.global(qos: .userInitiated).async {
-            let (res, err, denied) = loadDirectory(p, hidden: hidden)
-            let sorted = sortItems(res, key: key, asc: ascending)   // 排序也在后台完成
-            let free = freeSpace(p)
-            let all = Set(res.map { $0.url })   // 选中项比对用的集合也在后台建好
-            DispatchQueue.main.async {
-                guard tok == self.loadToken else { return }
-                if self.error != err { self.error = err }
-                if self.permissionDenied != denied { self.permissionDenied = denied }
-                self.freeBytes = free
-                let newItems = key == self.sortKey && ascending == self.asc ? sorted : sortItems(res, key: self.sortKey, asc: self.asc)
-                // 内容没变（例如目录监视的重复通知）：什么都不更新，界面不重绘
-                if newItems == self.items && self.cacheVersion >= 0 && !self.items.isEmpty {
-                    if self.loading { self.loading = false }
-                    self.watch(); return
-                }
-                self.items = newItems
-                let dirPath = p.path
-                if !self.selection.isEmpty && !self.selection.isSubset(of: all) {
-                    // 写法不同的同一文件（/tmp 与 /private/tmp 等，例如「前往」或命令面板选中的文件）按名称对上并换成列表里的写法；真正不在了的才去掉
-                    let map = matchByName(self.selection.filter { !all.contains($0) }, dir: p, display: newItems)
-                    let keep = Set(self.selection.compactMap { u -> URL? in all.contains(u) ? u : (map[u] ?? (u.deletingLastPathComponent().path != dirPath ? u : nil)) })
-                    if keep != self.selection { self.selection = keep; if let a = self.anchor, let b = map[a] { self.anchor = b } }
-                }
-                if self.loading { self.loading = false }
-                self.recompute()
-                self.app?.noteTags(res)
-                self.watch()
-            }
-        }
-    }
-    /// 显示的位置在磁盘上已经不存在（被移走、改名、删除）时不再显示它（访达行为）：
-    /// 当前文件夹不在了 → 退到最近的仍存在的上级；分栏视图里不在了的栏截掉；不在了的选中项去掉。
-    /// 只检查当前文件夹、分栏链和不在当前文件夹里的选中项（数量都很少），不读目录。
-    func pruneMissing() {
-        let fm = FileManager.default
-        if !isGlobalSearch, path.path != "/", !fm.fileExists(atPath: path.path) {
-            var p = path.deletingLastPathComponent()
-            while p.path != "/" && !fm.fileExists(atPath: p.path) { p = p.deletingLastPathComponent() }
-            path = p.standardizedFileURL; columnChain = []; selection = []; anchor = nil; error = nil; permissionDenied = false
-            return
-        }
-        if let i = columnChain.firstIndex(where: { !fm.fileExists(atPath: $0.path) }) {
-            columnChain = Array(columnChain.prefix(i))
-        }
-        let dir = path.path
-        if !selection.isEmpty && selection.count <= 200 {   // 大量选中（全选几千项）时不逐个检查，避免卡主线程
-            let keep = selection.filter { $0.deletingLastPathComponent().path == dir || fm.fileExists(atPath: $0.path) }
-            if keep.count != selection.count { selection = keep; if let a = anchor, !keep.contains(a) { anchor = nil } }
-        }
-    }
-    private func watch() {
-        guard watchedPath != path.path else { return }
-        watcher?.cancel(); watcher = nil; watchedPath = path.path
-        let fd = open(path.path, O_EVTONLY); guard fd >= 0 else { return }
-        let s = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        s.setEventHandler { [weak self] in self?.scheduleReload() }
-        s.setCancelHandler { close(fd) }
-        s.resume(); watcher = s
-    }
-    private func scheduleReload() {
-        if pending { return }; pending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self else { return }
-            // 后台文件操作进行中：先不刷新（操作结束时会统一刷新一次），避免批量操作时反复重载列表
-            if self.app?.progress != nil { self.pending = false; self.scheduleReload(); return }
-            self.pending = false; self.reload()
-        }
-    }
-
-    // MARK: search
-    func setSearch(_ t: String) {
-        guard t != searchText else { return }
-        searchText = t
-        if !t.isEmpty { tagFilter = nil }
-        refreshSearch()
-    }
-    func refreshSearch() {
-        if !isGlobalSearch { stopQuery(); searchResults = []; searching = false; recompute(); return }
-        searchToken += 1; let tok = searchToken
-        searching = true; recompute()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, tok == self.searchToken else { return }
-            // 名称搜索走快速路径：子文件夹→后台枚举，整台 Mac→searchfs 卷宗目录；内容/标签仍需 Spotlight
-            if !self.needsSpotlight {
-                if self.searchScope == .mac, FastSearch.catalogSupported { self.startCatalogSearch() } else { self.startEnumSearch() }
-                return
-            }
-            self.startQuery()
-        }
-    }
-    func showTag(_ t: String) { searchText = ""; matchMode = .name; criteria = []; tagFilter = t; selection = []; refreshSearch() }
-    func clearSearch() { searchText = ""; matchMode = .name; tagFilter = nil; criteria = []; stopQuery(); searchResults = []; searching = false; recompute() }
-    func criteriaChanged() { if isGlobalSearch { refreshSearch() } else { recompute() } }
-    func addCriterion() { criteria.append(SearchCriterion()) }
-    func removeCriterion(_ id: UUID) { criteria.removeAll { $0.id == id } }
-    /// 侧栏「已存搜索」点开：把整套搜索状态搬到当前栏（访达智能文件夹行为）
-    func applySaved(_ s: SavedSearch) {
-        matchMode = s.matchMode; criteria = s.criteria; searchScope = s.scope; tagFilter = nil; selection = []
-        searchText = s.text; refreshSearch()
-    }
-    /// 快速路径 1：子文件夹递归枚举——直接扫文件系统，几十毫秒出第一批结果
-    private func startEnumSearch() {
-        let root = path, q = searchText, hidden = app?.showHidden ?? false, tok = searchToken
-        searchResults = []
-        FastSearch.enumerate(root: root, query: q, showHidden: hidden, isCancelled: { [weak self] in self?.searchToken != tok },
-            onBatch: { [weak self] urls in
-                let its = urls.map(makeItem).filter { self?.clientMatch($0) ?? false }
-                DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
-                    self.searchResults += its; self.recompute() }
-            },
-            done: { [weak self] in DispatchQueue.main.async {
-                guard let self = self, tok == self.searchToken else { return }
-                self.searching = false; self.recompute() } })
-    }
-    /// 快速路径 2：整台 Mac 名称搜索——searchfs(2) 扫 APFS 卷宗目录；不支持/出错回退 Spotlight
-    private func startCatalogSearch() {
-        let q = searchText, hidden = app?.showHidden ?? false, tok = searchToken
-        searchResults = []
-        FastSearch.catalogSearch(query: q, showHidden: hidden, limit: 2000, isCancelled: { [weak self] in self?.searchToken != tok },
-            onBatch: { [weak self] urls in
-                let its = urls.map(makeItem).filter {
-                    $0.name.localizedCaseInsensitiveContains(q) && (self?.clientMatch($0) ?? false)
-                }
-                DispatchQueue.main.async { guard let self = self, tok == self.searchToken else { return }
-                    self.searchResults += its; self.recompute() }
-            },
-            done: { [weak self] ok in DispatchQueue.main.async {
-                guard let self = self, tok == self.searchToken else { return }
-                if !ok { self.startQuery(); return }
-                self.searching = false; self.recompute() } })
-    }
-    private func stopQuery() {
-        searchToken += 1   // 同时作废进行中的枚举/卷宗搜索批
-        query?.stop(); query = nil
-        observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
-    }
-    private func startQuery() {
-        stopQuery()
-        let q = NSMetadataQuery()
-        if let t = tagFilter {
-            q.predicate = criteria.isEmpty ? NSPredicate(format: "kMDItemUserTags == %@", t)
-                : NSCompoundPredicate(andPredicateWithSubpredicates: [NSPredicate(format: "kMDItemUserTags == %@", t)] + criteria.compactMap { $0.spotlight })
-            q.searchScopes = [NSMetadataQueryLocalComputerScope]
-        } else {
-            var preds: [NSPredicate] = []
-            if !searchText.isEmpty {
-                preds.append(matchMode == .contents
-                    ? NSPredicate(format: "kMDItemTextContent CONTAINS[cd] %@", searchText)
-                    : NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(searchText)*"))
-            }
-            preds += criteria.compactMap { $0.spotlight }
-            q.predicate = preds.isEmpty ? NSPredicate(value: true)
-                : (preds.count == 1 ? preds[0] : NSCompoundPredicate(andPredicateWithSubpredicates: preds))
-            q.searchScopes = searchScope == .mac ? [NSMetadataQueryLocalComputerScope] : [path]
-        }
-        let nc = NotificationCenter.default
-        for n in [NSNotification.Name.NSMetadataQueryDidFinishGathering, .NSMetadataQueryDidUpdate] {
-            observers.append(nc.addObserver(forName: n, object: q, queue: .main) { [weak self] _ in self?.collect() })
-        }
-        query = q
-        q.start()
-    }
-    private func collect() {
-        guard let q = query else { return }
-        q.disableUpdates()
-        var urls: [URL] = []
-        for i in 0..<min(q.resultCount, 2000) {
-            if let it = q.result(at: i) as? NSMetadataItem, let p = it.value(forAttribute: NSMetadataItemPathKey) as? String { urls.append(URL(fileURLWithPath: p)) }
-        }
-        q.enableUpdates()
-        let tok = searchToken
-        DispatchQueue.global(qos: .userInitiated).async {
-            let res = urls.map(makeItem)
-            DispatchQueue.main.async {
-                guard tok == self.searchToken, self.isGlobalSearch else { return }
-                self.searchResults = res; self.searching = false; self.recompute()
-            }
-        }
-    }
-}
-
-final class OpStatus: ObservableObject { @Published var text: String? }
-final class TabChrome: ObservableObject {
-    @Published var viewMode: ViewMode = .list
-    @Published var groupKey: GroupKey = .none
-    @Published var sortKey: SortKey = .name
-    @Published var asc = true
-    @Published var searchText = ""
-    @Published var tagFilter: String?
-    @Published var matchMode: SearchMatch = .name
-    @Published var hasSelection = false
-    func set<T: Equatable>(_ k: ReferenceWritableKeyPath<TabChrome, T>, _ v: T) { if self[keyPath: k] != v { self[keyPath: k] = v } }
-}
-
-final class PaneModel: ObservableObject {
-    @Published var tabs: [TabModel] = []
-    @Published var current = 0
-    var tab: TabModel { tabs[max(0, min(current, tabs.count - 1))] }
-}
 
 struct AlertInfo: Identifiable { let id = UUID(); let title: String; let message: String; var fda = false }
 struct RenameReq: Identifiable { let id = UUID(); let url: URL }
@@ -663,22 +18,23 @@ final class WeakView { weak var v: NSView? }
 
 // MARK: - App state
 final class AppState: ObservableObject {
+    static let maxUndoDepth = 50
     @Published var panes: [PaneModel] = []
     @Published var active = 0
-    @Published var dual: Bool = UserDefaults.standard.object(forKey: "dual") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(dual, forKey: "dual"); if !dual { active = 0; focusActiveTable() } } }
-    @Published var showHidden = UserDefaults.standard.bool(forKey: "showHidden") {
-        didSet { UserDefaults.standard.set(showHidden, forKey: "showHidden"); reloadAll() } }
-    @Published var showPreview = UserDefaults.standard.bool(forKey: "showInfo") {
-        didSet { UserDefaults.standard.set(showPreview, forKey: "showInfo") } }
-    @Published var iconSize: Double = UserDefaults.standard.object(forKey: "iconSize") as? Double ?? 80 {
-        didSet { UserDefaults.standard.set(iconSize, forKey: "iconSize") } }
+    @Published var dual: Bool = Settings.dual {
+        didSet { Settings.dual = dual; if !dual { active = 0; focusActiveTable() } } }
+    @Published var showHidden = Settings.showHidden {
+        didSet { Settings.showHidden = showHidden; reloadAll() } }
+    @Published var showPreview = Settings.showPreview {
+        didSet { Settings.showPreview = showPreview } }
+    @Published var iconSize: Double = Settings.iconSize {
+        didSet { Settings.iconSize = iconSize } }
     @Published var bookmarks: [URL] = []
     @Published var recents: [URL] = []
-    @Published var recentSearches: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+    @Published var recentSearches: [String] = Settings.recentSearches
     @Published var savedSearches: [SavedSearch] = []
     @Published var volumes: [VolumeInfo] = []
-    @Published var customTags: [String] = UserDefaults.standard.stringArray(forKey: "customTags") ?? []
+    @Published var customTags: [String] = Settings.customTags
     @Published var alert: AlertInfo?
     @Published var renameReq: RenameReq?
     @Published var sizeReq: SizeReq?
@@ -699,29 +55,30 @@ final class AppState: ObservableObject {
     @Published var inlineRename: URL?
     @Published var tagPopoverTick = 0
     @Published var showViewOptions = false
-    @Published var showPathBar = UserDefaults.standard.object(forKey: "showPathBar") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showPathBar, forKey: "showPathBar") } }
+    @Published var showPathBar = Settings.showPathBar {
+        didSet { Settings.showPathBar = showPathBar } }
     let responders = [WeakView(), WeakView()]
     var controllers: [PaneController] = []
     var undoStack: [UndoOp] = []
+    var redoStack: [UndoOp] = []
     var cutChangeCount = -1
     var ownClip: (Int, [URL])?
     let favorites: [URL]
-    let ud = UserDefaults.standard, fm = FileManager.default
+    let fm = FileManager.default
 
     init() {
-        let fm = FileManager.default, ud = UserDefaults.standard
+        let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         var f = [home, home.appendingPathComponent("Desktop"), home.appendingPathComponent("Documents"), home.appendingPathComponent("Downloads"), URL(fileURLWithPath: "/Applications")]
         let icloud = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
         if fm.fileExists(atPath: icloud.path) { f.append(icloud) }
         favorites = f
-        bookmarks = (ud.stringArray(forKey: "bookmarks") ?? []).map { URL(fileURLWithPath: $0) }
-        recents = (ud.stringArray(forKey: "recents") ?? []).map { URL(fileURLWithPath: $0) }
-        if let d = ud.data(forKey: "savedSearches") { savedSearches = (try? JSONDecoder().decode([SavedSearch].self, from: d)) ?? [] }
+        bookmarks = Settings.bookmarks
+        recents = Settings.recents
+        savedSearches = Settings.savedSearches
         var ps: [PaneModel] = []
         for i in 0..<2 {
-            let saved = ud.stringArray(forKey: "pane\(i)Tabs") ?? [], modes = ud.stringArray(forKey: "pane\(i)Modes") ?? []
+            let (saved, modes, cur) = Settings.loadPane(i)
             var pairs: [(URL, ViewMode)] = []
             for (j, s) in saved.enumerated() where fm.fileExists(atPath: s) {
                 pairs.append((URL(fileURLWithPath: s), j < modes.count ? ViewMode(rawValue: modes[j]) ?? .list : .list))
@@ -729,7 +86,7 @@ final class AppState: ObservableObject {
             if pairs.isEmpty { pairs = [(i == 0 ? home : home.appendingPathComponent("Downloads"), .list)] }
             let p = PaneModel()
             p.tabs = pairs.map { TabModel(path: $0.0, app: self, mode: $0.1) }
-            p.current = min(ud.integer(forKey: "pane\(i)Cur"), p.tabs.count - 1)
+            p.current = min(cur, p.tabs.count - 1)
             ps.append(p)
         }
         panes = ps
@@ -747,32 +104,37 @@ final class AppState: ObservableObject {
     var activeController: PaneController { controllers[active] }
     var allTags: [String] { standardTags.map { $0.0 } + customTags }
 
+    /// 记录一步可撤销操作：超过 maxUndoDepth 时淘汰最早的记录，并清空重做栈
+    func recordUndo(_ op: UndoOp) {
+        undoStack.append(op)
+        if undoStack.count > Self.maxUndoDepth { undoStack.removeFirst(undoStack.count - Self.maxUndoDepth) }
+        redoStack.removeAll()
+    }
+
     func touch() { objectWillChange.send(); saveState() }
     func saveState() {
         guard panes.count == 2 else { return }
         for (i, p) in panes.enumerated() {
-            ud.set(p.tabs.map { $0.path.path }, forKey: "pane\(i)Tabs")
-            ud.set(p.tabs.map { $0.viewMode.rawValue }, forKey: "pane\(i)Modes")
-            ud.set(p.current, forKey: "pane\(i)Cur")
+            Settings.savePane(i, tabs: p.tabs, current: p.current)
         }
     }
     func visited(_ u: URL) {
         recents.removeAll { $0.path == u.path }; recents.insert(u, at: 0)
         if recents.count > 15 { recents.removeLast(recents.count - 15) }
-        ud.set(recents.map { $0.path }, forKey: "recents"); touch()
+        Settings.recents = recents; touch()
     }
     /// 侧边栏显示的「最近访问」：所在磁盘没有装载（外置盘拔掉了）的记录先不显示，记录本身保留，
     /// 磁盘再接上就会重新出现。只比较路径和已装载卷列表，不访问磁盘（不会唤醒休眠的硬盘、不弹窗）。
     var visibleRecents: [URL] { recentsOnMountedVolumes(recents, mounted: volumes.map { $0.url.path }) }
     func removeRecent(_ u: URL) {
         recents.removeAll { $0.path == u.path }
-        ud.set(recents.map { $0.path }, forKey: "recents"); touch()
+        Settings.recents = recents; touch()
     }
     func noteTags(_ items: [FileItem]) {
         let std = Set(standardTags.map { $0.0 }).union(englishTags.keys)
         let new = Set(items.flatMap { $0.tags }).subtracting(std).subtracting(customTags)
         guard !new.isEmpty else { return }
-        customTags += new.sorted(); ud.set(customTags, forKey: "customTags")
+        customTags += new.sorted(); Settings.customTags = customTags
     }
     func selectionDidChange(_ t: TabModel) {
         for (i, p) in panes.enumerated() where p.tab === t { if i < controllers.count { controllers[i].refreshQL() } }
@@ -843,18 +205,18 @@ final class AppState: ObservableObject {
     func addBookmark(_ u: URL? = nil) {
         let u = u ?? activeTab.path
         guard !bookmarks.contains(where: { $0.path == u.path }) else { return }
-        bookmarks.append(u); ud.set(bookmarks.map { $0.path }, forKey: "bookmarks")
+        bookmarks.append(u); Settings.bookmarks = bookmarks
     }
-    func removeBookmark(_ u: URL) { bookmarks.removeAll { $0.path == u.path }; ud.set(bookmarks.map { $0.path }, forKey: "bookmarks") }
+    func removeBookmark(_ u: URL) { bookmarks.removeAll { $0.path == u.path }; Settings.bookmarks = bookmarks }
     // MARK: 最近搜索 / 已存搜索（仿访达：搜索建议、智能文件夹）
     func recordSearch(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
         recentSearches.removeAll { $0 == t }; recentSearches.insert(t, at: 0)
         if recentSearches.count > 10 { recentSearches.removeLast() }
-        ud.set(recentSearches, forKey: "recentSearches")
+        Settings.recentSearches = recentSearches
     }
-    func clearRecentSearches() { recentSearches = []; ud.removeObject(forKey: "recentSearches") }
+    func clearRecentSearches() { recentSearches = []; Settings.recentSearches = [] }
     func saveCurrentSearch(name: String, tab: TabModel? = nil) {
         let t = tab ?? activeTab
         let s = SavedSearch(name: name.isEmpty ? (t.searchText.isEmpty ? "未命名搜索" : t.searchText) : name,
@@ -867,7 +229,7 @@ final class AppState: ObservableObject {
         guard let i = savedSearches.firstIndex(where: { $0.id == s.id }) else { return }
         savedSearches[i].name = name; persistSearches()
     }
-    private func persistSearches() { ud.set(try? JSONEncoder().encode(savedSearches), forKey: "savedSearches") }
+    private func persistSearches() { Settings.savedSearches = savedSearches }
     func runSaved(_ s: SavedSearch) { activeTab.applySaved(s); focusActiveTable() }
     func refreshVolumes() {
         let keys: [URLResourceKey] = [.volumeLocalizedNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
@@ -953,7 +315,7 @@ final class AppState: ObservableObject {
         case .alias:
             var made: [URL] = [], errs: [String] = []
             for u in urls { do { made.append(try FileOps.makeAlias(u, in: dir)) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") } }
-            if !made.isEmpty { undoStack.append(.created(made)) }
+            if !made.isEmpty { recordUndo(.created(made)) }
             reload(dirs: [dir])
             if !errs.isEmpty { showError("无法制作替身", errs.joined(separator: "\n")) }
         }
@@ -1080,7 +442,7 @@ final class AppState: ObservableObject {
                 if !r.replaced.isEmpty { ops.append(.trashed(r.replaced)) }
                 if !r.moved.isEmpty { ops.append(.moved(r.moved)) }
                 if !r.copied.isEmpty { ops.append(.created(r.copied)) }
-                if ops.count == 1 { self.undoStack.append(ops[0]) } else if !ops.isEmpty { self.undoStack.append(.group(ops)) }
+                if ops.count == 1 { self.recordUndo(ops[0]) } else if !ops.isEmpty { self.recordUndo(.group(ops)) }
                 self.removeFromLists(r.moved.map { $0.0 })
                 let landed = Set((r.moved.map { $0.1 } + r.copied).map { $0.standardizedFileURL })
                 for p in self.panes { for t in p.tabs where t.path.path == dir.standardizedFileURL.path && !landed.isEmpty { t.selection = landed } }
@@ -1098,7 +460,7 @@ final class AppState: ObservableObject {
             let r = FileOps.trash(urls, progress: p)
             DispatchQueue.main.async {
                 self.endOp(p)
-                if !r.done.isEmpty { self.undoStack.append(.trashed(r.done)) }
+                if !r.done.isEmpty { self.recordUndo(.trashed(r.done)) }
                 self.removeFromLists(r.done.map { $0.0 })
                 self.reload(dirs: dirs)
                 if !r.errs.isEmpty { self.showError("无法移到废纸篓", r.errs.joined(separator: "\n"), fda: r.perm) }
@@ -1111,7 +473,7 @@ final class AppState: ObservableObject {
         let dir = target ?? (tab.viewMode == .column && !tab.isGlobalSearch ? tab.columnChain.last : nil) ?? tab.path
         do {
             let u = try FileOps.newFolder(in: dir).realFileURL
-            undoStack.append(.created([u]))
+            recordUndo(.created([u]))
             if tab.searchActive { tab.clearSearch() }
             tab.selection = [u]; tab.anchor = u
             tab.reload()
@@ -1124,7 +486,7 @@ final class AppState: ObservableObject {
         guard urls.allSatisfy({ $0.deletingLastPathComponent().realFileURL.path == dir }) else { showError("无法新建文件夹", "所选项目需要在同一个文件夹里。"); return }
         do {
             let r = try FileOps.newFolderWithItems(urls)
-            undoStack.append(.group([.created([r.folder]), .moved(r.moved)]))
+            recordUndo(.group([.created([r.folder]), .moved(r.moved)]))
             let u = r.folder.realFileURL
             activeTab.selection = [u]; activeTab.anchor = u
             reloadVisible(); beginRename(u)
@@ -1133,7 +495,7 @@ final class AppState: ObservableObject {
     func makeAlias(_ urls: [URL]) {
         var made: [URL] = [], errs: [String] = []
         for u in urls { do { made.append(try FileOps.makeAlias(u)) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") } }
-        if !made.isEmpty { undoStack.append(.created(made)); activeTab.selection = Set(made.map { $0.realFileURL }) }
+        if !made.isEmpty { recordUndo(.created(made)); activeTab.selection = Set(made.map { $0.realFileURL }) }
         reloadVisible()
         if !errs.isEmpty { showError("无法制作替身", errs.joined(separator: "\n")) }
     }
@@ -1146,7 +508,7 @@ final class AppState: ObservableObject {
         resetDisplayNames()
         guard name.trimmingCharacters(in: .whitespacesAndNewlines) != u.lastPathComponent else { return }
         do {
-            let dst = try FileOps.rename(u, to: name); undoStack.append(.rename(u, dst))
+            let dst = try FileOps.rename(u, to: name); recordUndo(.rename(u, dst))
             for p in panes { for t in p.tabs where t.selection.contains(where: { samePath($0, u) }) { t.selection = [dst.realFileURL]; t.anchor = dst.realFileURL } }
             reloadVisible()
         } catch { showError("无法重命名", error.localizedDescription, fda: isPermissionError(error)) }
@@ -1160,7 +522,7 @@ final class AppState: ObservableObject {
                 self.busyText = nil
                 switch res {
                 case .success(let out):
-                    self.undoStack.append(.created([out]))
+                    self.recordUndo(.created([out]))
                     for p in self.panes { for t in p.tabs where t.path.path == out.deletingLastPathComponent().path { t.selection = [out.standardizedFileURL] } }
                     self.reloadVisible()
                 case .failure(let e): self.showError("无法压缩", e.localizedDescription)
@@ -1228,7 +590,7 @@ final class AppState: ObservableObject {
                 self.endOp(p); resetDisplayNames()
                 switch res {
                 case .success(let pairs):
-                    if !pairs.isEmpty { self.undoStack.append(.renamedBatch(pairs)) }
+                    if !pairs.isEmpty { self.recordUndo(.renamedBatch(pairs)) }
                     self.lastBatchRename = pairs
                     // 选中项跟着新名字走：只换最后一段名称，保留列表里 URL 原来的写法（/tmp 与 /private/tmp 这类同一位置的两种写法不会对不上）
                     self.remapSelection(pairs)
@@ -1251,7 +613,7 @@ final class AppState: ObservableObject {
             if allHave { t.removeAll { $0 == tag } } else if !t.contains(tag) { t.append(tag) }
             do { try FileOps.setTags(u, t) } catch { errs.append("「\(u.lastPathComponent)」：\(error.localizedDescription)") }
         }
-        if tagColor(tag) == nil && !customTags.contains(tag) { customTags.append(tag); ud.set(customTags, forKey: "customTags") }
+        if tagColor(tag) == nil && !customTags.contains(tag) { customTags.append(tag); Settings.customTags = customTags }
         reloadVisible()
         for p in panes { for t in p.tabs where t.isGlobalSearch { t.refreshSearch() } }
         if !errs.isEmpty { showError("无法修改标签", errs.joined(separator: "\n")) }
@@ -1259,73 +621,39 @@ final class AppState: ObservableObject {
     func undo() {
         resetDisplayNames()
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
-        let p = beginOp("撤销", count: 1)
+        performUndoOrRedo(op, isRedo: false)
+    }
+    func redo() {
+        resetDisplayNames()
+        guard let op = redoStack.popLast() else { NSSound.beep(); return }
+        performUndoOrRedo(op, isRedo: true)
+    }
+    private func performUndoOrRedo(_ op: UndoOp, isRedo: Bool) {
+        let verb = isRedo ? "重做" : "撤销"
+        let p = beginOp(verb, count: 1)
         opQueue.async {
             p.markRunning()
-            var put: [URL] = []
-            let err: String? = { do { put = try FileOps.undo(op); return nil } catch { return error.localizedDescription } }()
+            var put: [URL] = [], inv: UndoOp?
+            let err: String? = {
+                do { let r = try FileOps.undoWithInverse(op); inv = r.inverse; put = r.trashed; return nil }
+                catch { return error.localizedDescription }
+            }()
             DispatchQueue.main.async {
                 self.lastUndoTrashed = put
                 self.endOp(p)
-                if let e = err { self.showError("无法撤销", e) }
-                if err == nil { self.shelfFollowUndo(op) }
-                if err == nil, case .renamedBatch(let pairs) = op { self.remapSelection(pairs.map { ($0.1, $0.0) }) }
+                if let e = err { self.showError("无法\(verb)", e) }
+                if let inv = inv {
+                    if isRedo {
+                        self.undoStack.append(inv)
+                        if self.undoStack.count > Self.maxUndoDepth { self.undoStack.removeFirst(self.undoStack.count - Self.maxUndoDepth) }
+                    } else {
+                        self.redoStack.append(inv)
+                    }
+                    self.shelfFollowUndo(op)
+                    if case .renamedBatch(let pairs) = op { self.remapSelection(pairs.map { ($0.1, $0.0) }) }
+                }
                 self.reloadVisible()
             }
         }
     }
-}
-
-extension URL {
-    /// 真实路径（/tmp → /private/tmp），和目录枚举得到的 URL 一致
-    var realFileURL: URL {
-        guard isFileURL, let r = realpath(path, nil) else { return standardizedFileURL }
-        defer { free(r) }
-        return URL(fileURLWithPath: String(cString: r))
-    }
-}
-func samePath(_ a: URL?, _ b: URL?) -> Bool { guard let a = a, let b = b else { return false }; return a.standardizedFileURL.path == b.standardizedFileURL.path }
-
-/// 选中项里有和列表写法不同的 URL（/tmp 与 /private/tmp 等同一位置的两种写法）时，按名称在当前文件夹里对上，返回「选中项 → 列表里的 URL」。
-/// 只在有对不上的选中项时才调用：每个不同的上级文件夹做一次 realpath，按名称查一次表。
-func matchByName(_ unmatched: [URL], dir: URL, display: [FileItem]) -> [URL: URL] {
-    guard !unmatched.isEmpty else { return [:] }
-    let d = dir.realFileURL.path
-    var parentOK: [String: Bool] = [:], byName: [String: URL]?, out: [URL: URL] = [:]
-    for u in unmatched {
-        let parent = u.deletingLastPathComponent()
-        let ok: Bool
-        if let c = parentOK[parent.path] { ok = c } else { ok = parent.realFileURL.path == d; parentOK[parent.path] = ok }
-        guard ok else { continue }
-        if byName == nil { byName = Dictionary(display.map { ($0.name, $0.url) }, uniquingKeysWith: { a, _ in a }) }
-        if let v = byName?[u.lastPathComponent] { out[u] = v }
-    }
-    return out
-}
-extension TabModel {
-    /// 把选中项换成列表里的写法（下一轮主线程再改，避免在界面刷新过程中改动；选择已经变了就不动）
-    func adoptSelectionForms(_ map: [URL: URL], expected: Set<URL>) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.selection == expected else { return }
-            self.selection = Set(expected.map { map[$0] ?? $0 })
-            if let a = self.anchor, let b = map[a] { self.anchor = b }
-        }
-    }
-}
-
-/// 去掉祖先文件夹也在列表里的项目（文件夹搬走时里面的东西随之搬走）。
-/// 在主线程上处理几千个项目也要快：只做字符串运算，同一个上级文件夹只往上查一次。
-func withoutNested(_ urls: [URL]) -> [URL] {
-    guard urls.count > 1 else { return urls }
-    let paths = urls.map { $0.path }   // 列表里的网址已经规范化过；不再逐个规范化（2003 项时从约 60ms 降到约 6ms）
-    let set = Set(paths)
-    var memo: [String: Bool] = [:]
-    func covered(_ d: String) -> Bool {
-        if let m = memo[d] { return m }
-        let r = set.contains(d) || (d != "/" && !d.isEmpty && covered((d as NSString).deletingLastPathComponent))
-        memo[d] = r; return r
-    }
-    var out: [URL] = []; out.reserveCapacity(urls.count)
-    for (u, p) in zip(urls, paths) where !covered((p as NSString).deletingLastPathComponent) { out.append(u) }
-    return out
 }
