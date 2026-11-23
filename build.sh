@@ -16,7 +16,7 @@ swiftc -O -parse-as-library -swift-version 5 $FLAGS -target arm64-apple-macos13 
 swiftc -O -parse-as-library -swift-version 5 $FLAGS -target x86_64-apple-macos13 $SRC -o fb_x86
 lipo -create fb_arm fb_x86 -output FileButler; rm -f fb_arm fb_x86
 A="build/文件管家.app"; rm -rf build; mkdir -p "$A/Contents/MacOS" "$A/Contents/Resources"
-cp FileButler "$A/Contents/MacOS/"; cp AppIcon.icns "$A/Contents/Resources/"; cp Info.plist "$A/Contents/"; mkdir -p "$A/Contents/Resources/zh-Hans.lproj"
+cp FileButler "$A/Contents/MacOS/"; rm -f FileButler; cp AppIcon.icns "$A/Contents/Resources/"; cp Info.plist "$A/Contents/"; mkdir -p "$A/Contents/Resources/zh-Hans.lproj"
 # 用本机固定的自签名证书签名：签名要求（identifier + 证书）每次构建都一样，
 # macOS 的隐私授权（完全磁盘访问等）在更新后依然有效。没有证书时退回临时签名。
 KC="$HOME/.filebutler-signing/signing.keychain-db"

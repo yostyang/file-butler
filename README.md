@@ -54,8 +54,10 @@
 需要安装 Xcode（或 Command Line Tools）：
 
 ```bash
-./build.sh                     # 编译通用版 build/文件管家.app 并打包 build/文件管家.dmg
-./test.sh --selftest-only      # 编译 + 文件操作自测（适用于无界面环境 / CI）
+swift build                    # 增量编译（支持在 Xcode / SourceKit-LSP 中直接打开 Package.swift）
+swift run FileButler --selftest  # 增量编译并运行文件操作自测
+./build.sh                     # 编译正式通用版 build/文件管家.app（不含测试代码）并打包 DMG
+./test.sh --selftest-only      # 编译测试版通用二进制 + 文件操作自测（适用于无界面环境 / CI）
 ./test.sh                      # 完整测试：编译 + 自测 + 界面测试 + 截图对比
 ./test.sh --approve            # 人工检查截图后更新基准图（Tests/golden/）
 ```

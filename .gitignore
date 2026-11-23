@@ -8,3 +8,5 @@ fb_x86
 *.app
 *.zip
 build-test/
+.build/
+.swiftpm/
