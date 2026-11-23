@@ -179,17 +179,23 @@ final class PaneController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         if urls == nil, FolderPeek.shared.isVisible { FolderPeek.shared.close(); return }
         let target = urls ?? tab.selectedURLs
         if target.count == 1, makeItem(target[0]).isFolderLike {
-            if !TestEnv.active, QLPreviewPanel.sharedPreviewPanelExists(), let p = QLPreviewPanel.shared(), p.isVisible { p.orderOut(nil) }
+            #if FB_TESTING
+            let suppressQL = TestEnv.active
+            #else
+            let suppressQL = false
+            #endif
+            if !suppressQL, QLPreviewPanel.sharedPreviewPanelExists(), let p = QLPreviewPanel.shared(), p.isVisible { p.orderOut(nil) }
             FolderPeek.shared.show(target[0], app: app); return
         }
         if FolderPeek.shared.isVisible { FolderPeek.shared.close() }
+        #if FB_TESTING
         if TestEnv.active { if urls == nil && !qlURLs.isEmpty && qlOpen { qlOpen = false; return }; qlURLs = urls ?? tab.selectedURLs; qlOpen = !qlURLs.isEmpty; return }
+        #endif
         guard let p = QLPreviewPanel.shared() else { return }
         if urls == nil && QLPreviewPanel.sharedPreviewPanelExists() && p.isVisible { p.orderOut(nil); return }
         qlURLs = urls ?? tab.selectedURLs
         guard !qlURLs.isEmpty else { NSSound.beep(); return }
         if let v = app.keyView(pane) { v.window?.makeFirstResponder(v) }
-        if TestEnv.active { return }   // 测试时不在屏幕上弹出快速查看窗口
         p.dataSource = self; p.delegate = self
         p.makeKeyAndOrderFront(nil); p.reloadData()
     }

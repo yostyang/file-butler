@@ -266,14 +266,23 @@ struct FileTable: NSViewRepresentable {
         var editingURL: URL?
         var cancelled = false
         func startInlineRename() {
+            #if FB_TESTING
             if TestEnv.debug { print("DEBUG startInline u=\(String(describing: app.inlineRename?.path)) editing=\(String(describing: editingURL)) table=\(table != nil) rows=\(rows.compactMap { if case .item(let it) = $0 { return it.url.path } else { return nil } }.prefix(3))") }
+            #endif
             guard let u = app.inlineRename, editingURL == nil, let tv = table,
                   let row = rows.firstIndex(where: { if case .item(let it) = $0 { return samePath(it.url, u) }; return false }) else { return }
             let col = tv.column(withIdentifier: NSUserInterfaceItemIdentifier("name"))
             guard col >= 0 else { return }
             tv.scrollRowToVisible(row)
-            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? DrawCell, let it = item(row) else { if TestEnv.debug { print("DEBUG no cell row=\(row)") }; return }
+            guard let cell = tv.view(atColumn: col, row: row, makeIfNecessary: true) as? DrawCell, let it = item(row) else {
+                #if FB_TESTING
+                if TestEnv.debug { print("DEBUG no cell row=\(row)") }
+                #endif
+                return
+            }
+            #if FB_TESTING
             if TestEnv.debug { print("DEBUG editing row=\(row) win=\(tv.window != nil)") }
+            #endif
             editingURL = u; cancelled = false
             let tf = cell.beginEditing()
             tf.delegate = self

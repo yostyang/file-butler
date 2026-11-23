@@ -2,9 +2,18 @@
 # 编译通用版（Apple 芯片 + Intel）并打包 DMG
 set -e
 cd "$(dirname "$0")"
-SRC="App.swift Progress.swift Transfer.swift IconCollection.swift UITestBasics.swift Model.swift Controller.swift FileTable.swift Browse.swift Views.swift SizeAnalysis.swift SelfTest.swift Bench.swift Menus.swift UITest.swift Media.swift BatchRename.swift Shelf.swift Palette.swift SelfTestV06.swift UITestV06.swift FolderPeek.swift UITestV061.swift Search.swift FastSearch.swift"
-swiftc -O -parse-as-library -swift-version 5 -target arm64-apple-macos13 $SRC -o fb_arm
-swiftc -O -parse-as-library -swift-version 5 -target x86_64-apple-macos13 $SRC -o fb_x86
+APP_SRC="App.swift Progress.swift Transfer.swift IconCollection.swift Model.swift Controller.swift FileTable.swift Browse.swift Views.swift SizeAnalysis.swift Bench.swift Menus.swift Media.swift BatchRename.swift Shelf.swift Palette.swift FolderPeek.swift Search.swift FastSearch.swift"
+TEST_SRC="SelfTest.swift SelfTestV06.swift UITest.swift UITestBasics.swift UITestV06.swift UITestV061.swift"
+# 正式构建不包含测试代码；仅在 FB_TESTING=1（由 test.sh 设置）时编入自测与界面测试
+if [ -n "${FB_TESTING:-}" ]; then
+  SRC="$APP_SRC $TEST_SRC"
+  FLAGS="-DFB_TESTING"
+else
+  SRC="$APP_SRC"
+  FLAGS=""
+fi
+swiftc -O -parse-as-library -swift-version 5 $FLAGS -target arm64-apple-macos13 $SRC -o fb_arm
+swiftc -O -parse-as-library -swift-version 5 $FLAGS -target x86_64-apple-macos13 $SRC -o fb_x86
 lipo -create fb_arm fb_x86 -output FileButler; rm -f fb_arm fb_x86
 A="build/文件管家.app"; rm -rf build; mkdir -p "$A/Contents/MacOS" "$A/Contents/Resources"
 cp FileButler "$A/Contents/MacOS/"; cp AppIcon.icns "$A/Contents/Resources/"; cp Info.plist "$A/Contents/"; mkdir -p "$A/Contents/Resources/zh-Hans.lproj"

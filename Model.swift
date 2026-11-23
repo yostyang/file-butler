@@ -799,10 +799,17 @@ final class AppState: ObservableObject {
     /// 这一栏当前负责键盘的视图。切换显示方式时，旧视图的最后一次更新可能晚于新视图的创建，
     /// 登记的会是一个已经离开窗口的视图（于是活动栏不跟随鼠标、方向键发到另一栏）。
     /// 这时在窗口里找这一栏正在显示的视图并重新登记；只在登记的视图失效时才遍历视图树。
+    var testWindow: NSWindow? {
+        #if FB_TESTING
+        return TestWindow.win
+        #else
+        return nil
+        #endif
+    }
     func keyView(_ i: Int, in w: NSWindow? = nil) -> NSView? {
         guard i < responders.count else { return nil }
         if let v = responders[i].v, v.window != nil, !v.isHiddenOrHasHiddenAncestor { return v }
-        guard let root = (w ?? TestWindow.win ?? NSApp?.mainWindow ?? NSApp?.windows.first(where: { $0.toolbar != nil }))?.contentView?.superview else { return responders[i].v }
+        guard let root = (w ?? testWindow ?? NSApp?.mainWindow ?? NSApp?.windows.first(where: { $0.toolbar != nil }))?.contentView?.superview else { return responders[i].v }
         var found: NSView?
         func walk(_ v: NSView) {
             if found != nil || v.isHidden { return }
@@ -962,8 +969,10 @@ final class AppState: ObservableObject {
     var lastUndoTrashed: [URL] = []
     private var opStart = Date()
     private var progressTimer: Timer?
+    #if FB_TESTING
     /// 测试用：同名冲突时的固定选择（nil = 弹出访达样式的对话框）
     static var conflictOverride: (Conflict, Bool)?
+    #endif
     /// 正在进行和排队的操作（进度窗口按这个列表显示，可以同时有多个）
     let center = OpCenter()
     func beginOp(_ verb: String, count: Int, kind: OpKind = .other, first: String = "", dest: String = "") -> OpProgress {
@@ -1009,8 +1018,10 @@ final class AppState: ObservableObject {
     /// 其他 DispatchQueue.main.async（目录刷新、缩略图、别的操作完成）全部排队；主线程一旦在等后台任务还会直接死锁。
     /// 改为通过 RunLoop.main.perform 投递：模态对话框的嵌套 run loop 里主队列照常执行，后台线程用信号量等待结果。
     func askConflict(_ name: String, move: Bool, multi: Bool = false) -> (Conflict, Bool) {
+        #if FB_TESTING
         if let o = AppState.conflictOverride { return o }
         if TestEnv.active { return (.keepBoth, false) }   // 测试时绝不弹出对话框
+        #endif
         func ask() -> (Conflict, Bool) {
             let a = AppState.conflictAlert(name: name, move: move, multi: multi)
             let r = a.runModal()
@@ -1170,7 +1181,7 @@ final class AppState: ObservableObject {
     private func showBatchRenamePanel() {
         let had = renamePanel != nil
         renamePanel?.close(); renamePanel = nil
-        let host = responders[active].v?.window ?? TestWindow.win ?? NSApp?.mainWindow
+        let host = responders[active].v?.window ?? testWindow ?? NSApp?.mainWindow
         if let m = batchRename, let w = host {
             let p = BatchRenamePanel(m: m, app: self); renamePanel = p; p.present(on: w)
         } else if had { DispatchQueue.main.async { self.focusActiveTable() } }

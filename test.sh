@@ -13,7 +13,7 @@ OUT=build-test/ui; mkdir -p build-test
 APP="build/文件管家.app/Contents/MacOS/FileButler"
 restore() { [ -f /tmp/fb-ui-defaults-backup.plist ] && defaults import com.yost.filebutler /tmp/fb-ui-defaults-backup.plist && rm -f /tmp/fb-ui-defaults-backup.plist || true; }
 trap restore EXIT
-echo "== 1/4 编译 =="; ./build.sh > build-test/build.log 2>&1 || { tail -30 build-test/build.log; echo "编译失败"; exit 1; }
+echo "== 1/4 编译（测试版）=="; FB_TESTING=1 NODMG=1 ./build.sh > build-test/build.log 2>&1 || { tail -30 build-test/build.log; echo "编译失败"; exit 1; }
 if [ -n "${FB_REQUIRE_SIGNING:-}" ]; then
   CERT_HASH="${FB_SIGNING_CERT_HASH:-f84b9654f42df2c8bfdd75f7eaf123a7525d060c}"
   grep -q "certificate leaf = H\"$CERT_HASH\"" build-test/build.log || { echo "签名身份不对（会导致权限失效）"; exit 1; }

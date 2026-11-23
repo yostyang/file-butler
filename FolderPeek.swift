@@ -52,7 +52,9 @@ final class FolderPeek: NSObject, NSWindowDelegate {
     func windowWillClose(_ n: Notification) { gen += 1; url = nil }
 
     private func place(_ p: NSPanel) {
+        #if FB_TESTING
         if TestEnv.active { p.setFrameOrigin(NSPoint(x: -6000, y: -6000)); return }   // 测试时不出现在屏幕上
+        #endif
         if let w = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.toolbar != nil }) {
             let f = w.frame
             p.setFrameOrigin(NSPoint(x: f.midX - p.frame.width / 2, y: f.midY - p.frame.height / 2))

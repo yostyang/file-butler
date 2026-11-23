@@ -67,7 +67,9 @@ private func copyCallback(_ what: Int32, _ stage: Int32, _ state: copyfile_state
         if copyfile_state_get(st, UInt32(COPYFILE_STATE_COPIED), &copied) == 0 {
             let d = Int64(copied) - c.cur; if d > 0 { c.cur = Int64(copied); c.counted += d; c.p.addBytes(d) }
         }
+        #if FB_TESTING
         if FileOps.testThrottleMs > 0 { usleep(UInt32(FileOps.testThrottleMs * 1000)) }
+        #endif
     } else if what == COPYFILE_RECURSE_FILE && stage == COPYFILE_FINISH, let s = src {
         // 克隆 / 小文件不会有数据进度回调：文件完成时补齐它的大小
         var st = stat(); if lstat(s, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG { let d = Int64(st.st_size) - c.cur; if d > 0 { c.counted += d; c.p.addBytes(d) } }
@@ -78,9 +80,11 @@ private func copyCallback(_ what: Int32, _ stage: Int32, _ state: copyfile_state
 
 extension FileOps {
     /// APFS 上用 clonefile（瞬间完成、不占额外空间），其他卷自动退回普通拷贝；可取消
+    #if FB_TESTING
     /// 测试用：关闭克隆 / 每个数据块后暂停，让大文件拷贝可以被观察和取消
     static var noClone = false
     static var testThrottleMs = 0
+    #endif
     static func copyItem(_ src: URL, to dst: URL, progress: OpProgress?, size: Int64 = 0) throws {
         let st = copyfile_state_alloc(); defer { copyfile_state_free(st) }
         let cb: copyfile_callback_t = copyCallback
@@ -89,7 +93,11 @@ extension FileOps {
         copyfile_state_set(st, UInt32(COPYFILE_STATE_STATUS_CB), unsafeBitCast(cb, to: UnsafeRawPointer.self))
         copyfile_state_set(st, UInt32(COPYFILE_STATE_STATUS_CTX), ctx)
         var f = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC
+        #if FB_TESTING
         if !noClone { f |= COPYFILE_CLONE }
+        #else
+        f |= COPYFILE_CLONE
+        #endif
         let r = withExtendedLifetime(c) { copyfile(src.path, dst.path, st, copyfile_flags_t(f)) }
         if r != 0 || c.err != 0 {
             let e = c.err != 0 ? c.err : errno

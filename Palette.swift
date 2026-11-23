@@ -176,7 +176,7 @@ final class PaletteModel: ObservableObject {
     func toggle() { visible ? close() : open() }
     func open() {
         guard let app = app else { return }
-        if let w = TestWindow.win ?? NSApplication.shared.keyWindow, w.attachedSheet != nil { NSSound.beep(); return }
+        if let w = app.testWindow ?? NSApplication.shared.keyWindow, w.attachedSheet != nil { NSSound.beep(); return }
         commands = PaletteEngine.commands(app)
         snapshot = PaletteEngine.snapshot(app)
         deep = []; query = ""; selected = 0

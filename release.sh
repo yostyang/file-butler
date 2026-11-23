@@ -15,6 +15,10 @@ fi
 B=$(( $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Info.plist) + 1 ))
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" -c "Set :CFBundleVersion $B" Info.plist
 FB_REQUIRE_SIGNING=1 ./test.sh || { echo "❌ 测试没通过，停止发布"; git checkout Info.plist; exit 1; }
+echo "== 编译正式版（不含测试代码）并打包 DMG =="
+./build.sh > build-test/release-build.log 2>&1 || { tail -30 build-test/release-build.log; echo "❌ 正式版编译失败"; git checkout Info.plist; exit 1; }
+CERT_HASH="${FB_SIGNING_CERT_HASH:-f84b9654f42df2c8bfdd75f7eaf123a7525d060c}"
+grep -q "certificate leaf = H\"$CERT_HASH\"" build-test/release-build.log || { echo "❌ 正式版签名身份不对"; git checkout Info.plist; exit 1; }
 osascript -e 'quit app "文件管家"' || true
 for i in $(seq 1 20); do pgrep -x FileButler >/dev/null || break; sleep 0.5; done
 pgrep -x FileButler >/dev/null && { echo "文件管家没有正常退出，停止发布"; git checkout Info.plist; exit 1; }

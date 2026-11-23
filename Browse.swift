@@ -345,7 +345,9 @@ struct ColumnLayout {
 /// 影片 / 音频仍用不自动播放的媒体预览。
 struct ColumnPreview: View {
     let item: FileItem
+    #if FB_TESTING
     static var lastLayout: (column: CGRect, image: CGRect)?   // 界面测试读取
+    #endif
     var body: some View {
         GeometryReader { g in
             let side = max(64, min(g.size.width - 32, g.size.height - 130))
@@ -366,8 +368,10 @@ struct ColumnPreview: View {
         }
     }
     func record(_ g: GeometryProxy, _ ig: GeometryProxy) {
+        #if FB_TESTING
         guard TestEnv.active else { return }
         ColumnPreview.lastLayout = (g.frame(in: .global), ig.frame(in: .global))
+        #endif
     }
 }
 

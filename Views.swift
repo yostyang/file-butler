@@ -33,7 +33,9 @@ struct ContentView: View {
         } message: { Text(app.alert?.message ?? "") }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { app.focusActiveTable() }
+            #if FB_TESTING
             if TestEnv.active { UITestRunner.start(app: app); return }
+            #endif
             if !hasFullDiskAccess() && !UserDefaults.standard.bool(forKey: "fdaPromptDismissed") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { app.showFDA = true }
             }
