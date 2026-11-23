@@ -39,6 +39,7 @@ final class CopyCtx {
     let p: OpProgress
     var counted: Int64 = 0      // 本项（含子文件）已计入的字节
     var cur: Int64 = 0          // 当前文件已计入的字节
+    var err: Int32 = 0          // 回调收到错误时记录 errno（避免被后续清理覆盖或吞掉）
     init(_ p: OpProgress) { self.p = p }
 }
 
@@ -56,6 +57,11 @@ struct TransferResult {
 private func copyCallback(_ what: Int32, _ stage: Int32, _ state: copyfile_state_t?, _ src: UnsafePointer<CChar>?, _ dst: UnsafePointer<CChar>?, _ ctx: UnsafeMutableRawPointer?) -> Int32 {
     guard let ctx = ctx else { return COPYFILE_CONTINUE }
     let c = Unmanaged<CopyCtx>.fromOpaque(ctx).takeUnretainedValue()
+    if stage == COPYFILE_ERR || what == COPYFILE_RECURSE_ERROR {
+        // 递归拷贝遇到错误（如无读权限）时必须返回 COPYFILE_QUIT，否则 copyfile 会吞掉错误并返回 0
+        if c.err == 0 { c.err = errno != 0 ? errno : EIO }
+        return COPYFILE_QUIT
+    }
     if what == COPYFILE_COPY_DATA && stage == COPYFILE_PROGRESS, let st = state {
         var copied: off_t = 0
         if copyfile_state_get(st, UInt32(COPYFILE_STATE_COPIED), &copied) == 0 {
@@ -85,8 +91,8 @@ extension FileOps {
         var f = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC
         if !noClone { f |= COPYFILE_CLONE }
         let r = withExtendedLifetime(c) { copyfile(src.path, dst.path, st, copyfile_flags_t(f)) }
-        if r != 0 {
-            let e = errno
+        if r != 0 || c.err != 0 {
+            let e = c.err != 0 ? c.err : errno
             c.p.addBytes(-c.counted)             // 没拷完的这一项不算进度
             try? fm.removeItem(at: dst)          // 不留半截文件（访达也是这样）
             if c.p.isCancelled { throw FBError("已取消") }
@@ -127,10 +133,11 @@ extension FileOps {
             for raw in urls where raw.deletingLastPathComponent().standardizedFileURL.path != dir.path && lexists(dir.appendingPathComponent(raw.lastPathComponent).path) { n += 1 }
             progress?.conflictsLeft = n
         }
-        var plan: [(src: URL, dst: URL, move: Bool)] = []
+        var plan: [(src: URL, dst: URL, move: Bool, replace: Bool)] = []
         plan.reserveCapacity(urls.count)
         loop: for raw in urls {
             if progress?.isCancelled == true { res.cancelled = true; break }
+            var replace = false
             let src = raw.standardizedFileURL, name = src.lastPathComponent
             let parent = src.deletingLastPathComponent().path
             if dir.path == src.path || dir.path.hasPrefix(src.path + "/") { res.errs.append("不能把「\(name)」放进它自身或它的子文件夹。"); progress?.step(); continue }
@@ -153,32 +160,58 @@ extension FileOps {
                 case .skip: progress?.step(); continue
                 case .keepBoth: dst = unique(name, copy: false)
                 case .replace:
+                    // 规划阶段只做标记，不动已有项目：新项目在执行阶段完整就位后才替换（见 commitReplace）。
+                    // 这样后面的冲突点「停止」、取消或拷贝失败时，旧项目都原样留在原处。
                     if reserved.contains(dst.path) { dst = unique(name, copy: false) }   // 和本批次另一项同名：保留两者
-                    else {
-                        do { var out: NSURL?; try fm.trashItem(at: dst, resultingItemURL: &out); if let o = out as URL? { res.replaced.append((dst, o)) } }
-                        catch { res.errs.append("「\(name)」：无法替换已有项目（\(error.localizedDescription)）"); progress?.step(); continue }
-                    }
+                    else { replace = true }
                 }
             }
             reserved.insert(dst.path)
-            plan.append((src, dst, move))
+            plan.append((src, dst, move, replace))
         }
         // 执行：移动（同卷 rename，失败或跨卷时交给 FileManager）
         let moves = plan.filter { $0.move }, copies = plan.filter { !$0.move }
         for m in moves {
             if progress?.isCancelled == true { res.cancelled = true; break }
             defer { progress?.step() }
-            if renamex_np(m.src.path, m.dst.path, UInt32(RENAME_EXCL)) == 0 { res.moved.append((m.src, m.dst)); continue }
-            if errno == EXDEV {
+            let name = m.src.lastPathComponent
+            // 替换时先放到目标文件夹里的临时名下，旧项目在 commitReplace 之前一直不动
+            let target = m.replace ? replaceTempURL(in: dir) : m.dst
+            if renamex_np(m.src.path, target.path, UInt32(RENAME_EXCL)) == 0 {
+                if m.replace {
+                    do { if let t = try commitReplace(tmp: target, dst: m.dst) { res.replaced.append((m.dst, t)) } }
+                    catch {
+                        _ = renamex_np(target.path, m.src.path, UInt32(RENAME_EXCL))   // 放回原处
+                        res.errs.append("「\(name)」：无法替换已有项目（\(error.localizedDescription)）"); continue
+                    }
+                }
+                res.moved.append((m.src, m.dst)); continue
+            }
+            let renameErr = errno
+            if renameErr == EXDEV {
                 // 跨卷移动 = 拷贝（有字节进度、可取消、不留半截）+ 删除原件
                 let size = treeSize(m.src)
                 if let p = progress { p.bytesTotal = max(0, p.bytesTotal) + size }
-                do { try copyItem(m.src, to: m.dst, progress: progress, size: size); try fm.removeItem(at: m.src); res.moved.append((m.src, m.dst)) }
-                catch { if progress?.isCancelled != true { res.errs.append("「\(m.src.lastPathComponent)」：\(error.localizedDescription)") } }
+                do { try copyItem(m.src, to: target, progress: progress, size: size) }
+                catch { if progress?.isCancelled != true { res.errs.append("「\(name)」：\(error.localizedDescription)") }; continue }
+                if m.replace {
+                    do { if let t = try commitReplace(tmp: target, dst: m.dst) { res.replaced.append((m.dst, t)) } }
+                    catch { try? fm.removeItem(at: target); res.errs.append("「\(name)」：无法替换已有项目（\(error.localizedDescription)）"); continue }
+                }
+                do { try fm.removeItem(at: m.src); res.moved.append((m.src, m.dst)) }
+                catch {
+                    // 目标已经完整拷好，只是原件没删干净：按「已拷贝」记录（撤销时会把拷贝移到废纸篓），并明确告诉用户
+                    res.copied.append(m.dst)
+                    res.errs.append("「\(name)」：已拷贝到目标位置，但无法删除原件，原件可能只删除了一部分（\(error.localizedDescription)）")
+                }
                 continue
             }
+            if m.replace {
+                // 同卷 rename 失败但不是跨卷（少见）：不替换，报告错误，旧项目保持不动
+                res.errs.append("「\(name)」：\(String(cString: strerror(renameErr)))"); continue
+            }
             do { try fm.moveItem(at: m.src, to: m.dst); res.moved.append((m.src, m.dst)) }
-            catch { res.errs.append("「\(m.src.lastPathComponent)」：\(error.localizedDescription)") }
+            catch { res.errs.append("「\(name)」：\(error.localizedDescription)") }
         }
         // 执行：拷贝（4 路并行；结果按原顺序汇总）
         if !copies.isEmpty && !res.cancelled {
@@ -187,27 +220,56 @@ extension FileOps {
             progress?.bytesTotal = sizes.reduce(0, +)
             var out = [String?](repeating: nil, count: copies.count)   // nil = 成功，否则为错误信息
             var ran = [Bool](repeating: false, count: copies.count)
+            var trashedOld = [URL?](repeating: nil, count: copies.count)   // 替换时旧项目在废纸篓中的位置
             let lock = NSLock(); var next = 0
             let workers = min(4, copies.count)
-            out.withUnsafeMutableBufferPointer { ob in ran.withUnsafeMutableBufferPointer { rb in
-                let o = ob, r = rb
+            out.withUnsafeMutableBufferPointer { ob in ran.withUnsafeMutableBufferPointer { rb in trashedOld.withUnsafeMutableBufferPointer { tb in
+                let o = ob, r = rb, t = tb
                 DispatchQueue.concurrentPerform(iterations: workers) { _ in
                     while true {
                         lock.lock(); let i = next; next += 1; lock.unlock()
                         if i >= copies.count || progress?.isCancelled == true { return }
                         let c = copies[i]
-                        do { try copyItem(c.src, to: c.dst, progress: progress, size: sizes[i]) } catch { o[i] = "「\(c.src.lastPathComponent)」：\(error.localizedDescription)" }
+                        // 替换：先完整拷到临时名，成功后才替换旧项目；拷贝失败 / 取消时旧项目不受影响
+                        let target = c.replace ? replaceTempURL(in: dir) : c.dst
+                        do {
+                            try copyItem(c.src, to: target, progress: progress, size: sizes[i])
+                            if c.replace {
+                                do { t[i] = try commitReplace(tmp: target, dst: c.dst) }
+                                catch { try? fm.removeItem(at: target); throw FBError("无法替换已有项目（\(error.localizedDescription)）") }
+                            }
+                        } catch { o[i] = "「\(c.src.lastPathComponent)」：\(error.localizedDescription)" }
                         r[i] = true
                         progress?.step()
                     }
                 }
-            } }
+            } } }
             for (i, c) in copies.enumerated() where ran[i] {
-                if let e = out[i] { if progress?.isCancelled != true { res.errs.append(e) } } else { res.copied.append(c.dst) }
+                if let e = out[i] { if progress?.isCancelled != true { res.errs.append(e) } } else {
+                    res.copied.append(c.dst)
+                    if let old = trashedOld[i] { res.replaced.append((c.dst, old)) }
+                }
             }
             if progress?.isCancelled == true { res.cancelled = true }
         }
         return res
+    }
+    /// 替换用的临时位置：和目标在同一文件夹（同一卷），这样最后一步是同卷 rename
+    static func replaceTempURL(in dir: URL) -> URL {
+        dir.appendingPathComponent(".fb-replace-\(UUID().uuidString)")
+    }
+    /// 新项目已经完整放在 tmp：这时才把旧项目 dst 移到废纸篓，再把 tmp 改成正式名称。
+    /// 改名失败时把旧项目从废纸篓放回原处（tmp 留给调用方处理）。返回旧项目在废纸篓中的位置（用于撤销）。
+    @discardableResult static func commitReplace(tmp: URL, dst: URL) throws -> URL? {
+        var out: NSURL?
+        try fm.trashItem(at: dst, resultingItemURL: &out)
+        let trashed = out as URL?
+        if renamex_np(tmp.path, dst.path, UInt32(RENAME_EXCL)) != 0 {
+            let e = errno
+            if let t = trashed { try? fm.moveItem(at: t, to: dst) }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(e), userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(e))])
+        }
+        return trashed
     }
     static func lexists(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 }
     static func isSymlink(_ u: URL) -> Bool { (try? fm.destinationOfSymbolicLink(atPath: u.path)) != nil }

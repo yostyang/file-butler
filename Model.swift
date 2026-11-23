@@ -281,12 +281,17 @@ enum FileOps {
             out = uniqueURL(in: dir, name: "归档.zip", copy: false)
             p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
             p.currentDirectoryURL = dir
-            p.arguments = ["-r", "-y", "-q", out.path] + urls.map { $0.lastPathComponent }
+            // 文件名前加「./」：以「-」开头的文件名不会被 zip 当成命令行选项（zip 存档时会去掉「./」）
+            p.arguments = ["-r", "-y", "-q", out.path] + urls.map { "./" + $0.lastPathComponent }
         }
-        p.standardError = errPipe; p.standardOutput = Pipe()
-        try p.run(); p.waitUntilExit()
+        p.standardError = errPipe; p.standardOutput = FileHandle.nullDevice
+        try p.run()
+        // 先读完错误输出再等进程结束：输出超过管道缓冲区（约 64 KB）时，先等会互相卡死
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
         guard p.terminationStatus == 0 else {
-            let msg = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            try? fm.removeItem(at: out)   // 不留半截压缩包
+            let msg = String(data: errData, encoding: .utf8) ?? ""
             throw FBError("压缩失败（\(p.terminationStatus)）：\(msg)")
         }
         return out
@@ -999,21 +1004,29 @@ final class AppState: ObservableObject {
         if multi { a.showsSuppressionButton = true; a.suppressionButton?.title = "应用到全部" }
         return a
     }
-    /// 在后台线程调用，同步等主线程的选择
+    /// 在后台线程调用，等主线程上的用户选择。
+    /// 不用 DispatchQueue.main.sync + runModal：那样对话框开着的整段时间里主队列被这个 block 占住，
+    /// 其他 DispatchQueue.main.async（目录刷新、缩略图、别的操作完成）全部排队；主线程一旦在等后台任务还会直接死锁。
+    /// 改为通过 RunLoop.main.perform 投递：模态对话框的嵌套 run loop 里主队列照常执行，后台线程用信号量等待结果。
     func askConflict(_ name: String, move: Bool, multi: Bool = false) -> (Conflict, Bool) {
         if let o = AppState.conflictOverride { return o }
         if TestEnv.active { return (.keepBoth, false) }   // 测试时绝不弹出对话框
-        var out: (Conflict, Bool) = (.stop, false)
-        DispatchQueue.main.sync {
+        func ask() -> (Conflict, Bool) {
             let a = AppState.conflictAlert(name: name, move: move, multi: multi)
             let r = a.runModal()
             let all = multi && a.suppressionButton?.state == .on
             switch r {
-            case .alertFirstButtonReturn: out = (.replace, all)
-            case .alertThirdButtonReturn: out = (.keepBoth, all)
-            default: out = (.stop, false)
+            case .alertFirstButtonReturn: return (.replace, all)
+            case .alertThirdButtonReturn: return (.keepBoth, all)
+            default: return (.stop, false)
             }
         }
+        if Thread.isMainThread { return ask() }   // 防御：主线程上直接问，绝不在主线程等信号量
+        var out: (Conflict, Bool) = (.stop, false)
+        let sem = DispatchSemaphore(value: 0)
+        RunLoop.main.perform(inModes: [.common]) { out = ask(); sem.signal() }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+        sem.wait()
         return out
     }
     /// 只刷新显示着这些文件夹的标签页

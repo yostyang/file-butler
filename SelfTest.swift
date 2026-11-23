@@ -75,6 +75,29 @@ enum SelfTest {
         r = FileOps.transfer([g1, g2], to: b, mode: .copy, resolve: { _, _ in asked += 1; return (.skip, true) })
         check("同名冲突：跳过 + 全部应用 → 只问一次", asked == 1 && r.copied.isEmpty, "asked=\(asked)")
         try? fm.removeItem(at: g1); try? fm.removeItem(at: g2)
+        // 替换的数据安全：旧项目只在新项目完整就位后才进废纸篓
+        do {
+            let r1 = a.appendingPathComponent("r1.txt"), r2 = a.appendingPathComponent("r2.txt")
+            let o1 = b.appendingPathComponent("r1.txt"), o2 = b.appendingPathComponent("r2.txt")
+            try "new1".write(to: r1, atomically: true, encoding: .utf8); try "new2".write(to: r2, atomically: true, encoding: .utf8)
+            try "old1".write(to: o1, atomically: true, encoding: .utf8); try "old2".write(to: o2, atomically: true, encoding: .utf8)
+            var n = 0
+            r = FileOps.transfer([r1, r2], to: b, mode: .copy, resolve: { _, _ in n += 1; return n == 1 ? (.replace, false) : (.stop, false) })
+            check("替换第一项后在第二项点停止 → 两个旧项目都不动、不进废纸篓", r.cancelled && r.replaced.isEmpty && text(o1) == "old1" && text(o2) == "old2", "\(text(o1)) / \(text(o2))")
+            // 拷贝失败（源文件不可读）→ 旧项目保留
+            try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: r1.path)
+            r = FileOps.transfer([r1], to: b, mode: .copy, resolve: { _, _ in (.replace, false) })
+            try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: r1.path)
+            check("替换时拷贝失败 → 旧项目保留、报告错误", !r.errs.isEmpty && r.replaced.isEmpty && text(o1) == "old1", r.errs.joined())
+            // 移动 + 替换 + 撤销
+            r = FileOps.transfer([r2], to: b, mode: .move, resolve: { _, _ in (.replace, false) })
+            check("移动遇到同名：替换 → 新内容，旧项目进废纸篓", text(o2) == "new2" && !exists(r2) && r.replaced.count == 1 && exists(r.replaced[0].1), r.errs.joined())
+            if let more = try? FileOps.undo(.group([.trashed(r.replaced), .moved(r.moved)])) { trashLeftovers += more }
+            check("撤销移动替换 → 两边都回到原样", text(o2) == "old2" && text(r2) == "new2")
+            let leftovers = ((try? fm.contentsOfDirectory(atPath: b.path)) ?? []).filter { $0.hasPrefix(".fb-replace-") }
+            check("替换不留临时文件", leftovers.isEmpty, leftovers.joined(separator: ","))
+            for u in [r1, r2, o1, o2] { try? fm.removeItem(at: u) }
+        } catch { check("替换的数据安全", false, error.localizedDescription) }
         // 拖放规则（访达）
         let other = root.appendingPathComponent("drop"); try? fm.createDirectory(at: other, withIntermediateDirectories: true)
         DragMods.override = []; check("拖放：同一卷默认移动", planDrop([f1], to: other) == .move)
@@ -146,6 +169,15 @@ enum SelfTest {
             let listing = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             check("压缩包内容正确", listing.contains("file1.txt") && listing.contains("dir1/inner.txt"))
             check("跨文件夹压缩会被拒绝", (try? FileOps.zip([f1, b.appendingPathComponent("file1.txt")])) == nil)
+            // 以「-」开头的文件名不能被当成 zip 的命令行选项
+            let dash = a.appendingPathComponent("-T.txt"), dash2 = a.appendingPathComponent("--help")
+            try "d".write(to: dash, atomically: true, encoding: .utf8); try "e".write(to: dash2, atomically: true, encoding: .utf8)
+            let z4 = try FileOps.zip([dash, dash2])
+            let p2 = Process(); p2.executableURL = URL(fileURLWithPath: "/usr/bin/unzip"); p2.arguments = ["-l", z4.path]
+            let pipe2 = Pipe(); p2.standardOutput = pipe2; try p2.run()
+            let listing2 = String(data: pipe2.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""; p2.waitUntilExit()
+            check("压缩以「-」开头的文件名（不被当成选项）", listing2.contains("-T.txt") && listing2.contains("--help") && !listing2.contains("./"), listing2)
+            for u in [dash, dash2, z4] { try? fm.removeItem(at: u) }
         } catch { check("压缩", false, error.localizedDescription) }
 
         // 访达同款：新建文件夹命名序列、用所选项目新建文件夹、制作替身
