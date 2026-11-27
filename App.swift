@@ -60,6 +60,7 @@ struct FileButlerApp: App {
                 Button("移动到另一栏") { app.copyToOther(move: true) }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(UInt32(NSF6FunctionKey))!)), modifiers: [])
                 Divider()
                 Button("空间分析") { app.sizeReq = SizeReq(url: app.activeTab.path) }.keyboardShortcut("s", modifiers: [.command, .option])
+                Button(app.isPinned(app.activeTab.path) ? "取消置顶当前文件夹" : "置顶当前文件夹") { app.togglePin() }
                 Button("把当前文件夹加入书签") { app.addBookmark() }.keyboardShortcut("b", modifiers: [.command, .shift])
                 Divider()
                 Button("加入文件架") { app.addToShelf(app.activeTab.selectedURLs) }
@@ -83,6 +84,11 @@ struct FileButlerApp: App {
                 Button("应用程序") { app.go(URL(fileURLWithPath: "/Applications")) }.keyboardShortcut("a", modifiers: [.command, .shift])
                 Divider()
                 Button("切换左右栏") { app.switchPane() }
+                Divider()
+                Button("保存当前布局…") { app.promptSaveLayout() }
+                ForEach(app.layouts) { l in
+                    Button("布局：\(l.name)（\(l.summary)）") { app.applyLayout(l) }
+                }
             }
             CommandGroup(before: .toolbar) {
                 ForEach(Array(ViewMode.allCases.enumerated()), id: \.offset) { i, m in

@@ -45,6 +45,7 @@ let package = Package(
                 "Search.swift",
                 "SelfTest.swift",
                 "SelfTestV06.swift",
+                "SelfTestV063.swift",
                 "Settings.swift",
                 "Shelf.swift",
                 "SizeAnalysis.swift",

@@ -5,7 +5,7 @@ import AppKit
 final class TabModel: ObservableObject, Identifiable {
     let id = UUID()
     @Published var path: URL
-    @Published var items: [FileItem] = []
+    var items: [FileItem] = []
     @Published var display: [FileItem] = []
     @Published var loading = false
     @Published var error: String?
@@ -15,7 +15,7 @@ final class TabModel: ObservableObject, Identifiable {
         if has != chrome.hasSelection { DispatchQueue.main.async { [weak self] in guard let self = self else { return }; self.chrome.set(\.hasSelection, !self.selection.isEmpty) } } } } }
     @Published var version = 0
     @Published var viewMode: ViewMode { didSet { app?.saveState(); chrome.set(\.viewMode, viewMode) } }
-    @Published var groupKey: GroupKey = .none { didSet { recompute(); chrome.set(\.groupKey, groupKey) } }
+    @Published var groupKey: GroupKey = .none { didSet { if groupKey != oldValue { cacheVersion = -1; version += 1; chrome.set(\.groupKey, groupKey) } } }
     @Published var searchText = "" { didSet { chrome.set(\.searchText, searchText) } }
     /// 与访达一致：默认搜「这台 Mac」
     @Published var searchScope: SearchScope = .mac { didSet { if searchScope != oldValue { refreshSearch() } } }
@@ -24,7 +24,7 @@ final class TabModel: ObservableObject, Identifiable {
     @Published var tagFilter: String? { didSet { chrome.set(\.tagFilter, tagFilter) } }
     /// 工具栏只观察这个小对象：选中、列表内容变化时工具栏不重排（大目录 ⌘A、批量操作不卡）
     let chrome = TabChrome()
-    @Published var searchResults: [FileItem] = []
+    var searchResults: [FileItem] = []
     @Published var searching = false
     /// 分栏视图的各栏内容（键盘导航读取；视图持有，这里弱引用）
     weak var columnLoader: ColumnLoader?
@@ -35,22 +35,28 @@ final class TabModel: ObservableObject, Identifiable {
     var anchor: URL?
     var freeBytes: Int64?
     private var cacheVersion = -1
+    private var indexVersion = -1
     private var groupsCache: [(String, [FileItem])] = []
     private var orderCache: [URL] = []
     private var indexCache: [URL: Int] = [:]
-    private func fillCaches() {
+    private func fillGroupCache() {
         guard cacheVersion != version else { return }
         cacheVersion = version
         groupsCache = groupItems(display, by: groupKey)
-        orderCache = groupsCache.flatMap { $0.1 }.map { $0.url }
+        orderCache = groupKey == .none ? display.map { $0.url } : groupsCache.flatMap { $0.1 }.map { $0.url }
+    }
+    private func fillIndexCache() {
+        guard indexVersion != version else { return }
+        indexVersion = version
         indexCache = Dictionary(display.enumerated().map { ($0.element.url, $0.offset) }, uniquingKeysWith: { a, _ in a })
     }
-    /// 分组结果按 version 缓存，选择变化时不再重新分组
-    var groups: [(String, [FileItem])] { fillCaches(); return groupsCache }
-    var groupedOrder: [URL] { fillCaches(); return orderCache }
+    /// 分组结果与选中索引分别按 version 惰性缓存：打开或刷新目录时若无选中项，不必每次构建整张索引表
+    var groups: [(String, [FileItem])] { fillGroupCache(); return groupsCache }
+    var groupedOrder: [URL] { fillGroupCache(); return orderCache }
     weak var app: AppState?
-    private var loadToken = 0, pending = false, searchToken = 0
-    private var watcher: DispatchSourceFileSystemObject?, watchedPath = ""
+    private(set) var isReloading = false
+    private var loadToken = 0, reloadGen = 0, pending = false, searchToken = 0
+    private var watcher: FolderWatcher?, watchedPath = ""
     private var query: NSMetadataQuery?
     private var observers: [NSObjectProtocol] = []
 
@@ -72,7 +78,7 @@ final class TabModel: ObservableObject, Identifiable {
     var searchActive: Bool { tagFilter != nil || !searchText.isEmpty || !criteria.isEmpty }
     var selectedItems: [FileItem] {
         guard !selection.isEmpty else { return [] }
-        fillCaches()
+        fillIndexCache()
         var inDisplay: [(Int, FileItem)] = [], rest: [URL] = []
         for u in selection { if let i = indexCache[u] { inDisplay.append((i, display[i])) } else { rest.append(u) } }
         return inDisplay.sorted { $0.0 < $1.0 }.map { $0.1 } + rest.sorted { $0.path < $1.path }.filter { FileManager.default.fileExists(atPath: $0.path) }.map(makeItem)
@@ -80,14 +86,14 @@ final class TabModel: ObservableObject, Identifiable {
     /// 状态栏用的选中摘要：只查已加载的列表，不逐个读取磁盘（大量选中时也不卡）
     var selectionSummary: (count: Int, size: Int64, hasFolder: Bool) {
         guard !selection.isEmpty else { return (0, 0, false) }
-        fillCaches()
+        fillIndexCache()
         var size: Int64 = 0, folder = false
         for u in selection { if let i = indexCache[u] { let it = display[i]; if it.isFolderLike { folder = true } else { size += it.size } } }
         return (selection.count, size, folder)
     }
     var selectedURLs: [URL] {
         guard !selection.isEmpty else { return [] }
-        fillCaches()
+        fillIndexCache()
         var inDisplay: [(Int, URL)] = [], rest: [URL] = []
         for u in selection { if let i = indexCache[u] { inDisplay.append((i, u)) } else { rest.append(u) } }
         return inDisplay.sorted { $0.0 < $1.0 }.map { $0.1 } + rest.sorted { $0.path < $1.path }
@@ -100,7 +106,7 @@ final class TabModel: ObservableObject, Identifiable {
         chrome.viewMode = mode; chrome.sortKey = sortKey; chrome.asc = asc
         reload()
     }
-    deinit { watcher?.cancel(); query?.stop(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
+    deinit { watcher?.stop(); query?.stop(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
 
     func navigate(_ url: URL, record: Bool = true) {
         let u = url.standardizedFileURL
@@ -117,7 +123,10 @@ final class TabModel: ObservableObject, Identifiable {
         guard p.path != path.path else { NSSound.beep(); return }
         let old = path; navigate(p); selection = [old]
     }
-    func setSort(_ k: SortKey, asc a: Bool) { sortKey = k; asc = a; resort() }
+    func setSort(_ k: SortKey, asc a: Bool) {
+        guard k != sortKey || a != asc else { return }
+        sortKey = k; asc = a; resort()
+    }
     func resort() {
         items = sortItems(items, key: sortKey, asc: asc); recompute()
         Settings.defaultSortKey = sortKey; Settings.defaultSortAsc = asc
@@ -141,26 +150,30 @@ final class TabModel: ObservableObject, Identifiable {
         } else { selection = [u]; anchor = u }
     }
     func reload() {
+        reloadGen += 1; pending = false; isReloading = true
         pruneMissing()
         // 分栏视图里右侧各栏的列表也一起重读（以前只重读第一栏，右侧栏留着已经移走的旧内容）
         if viewMode == .column, let l = columnLoader { for c in columnChain { l.load(c, hidden: app?.showHidden ?? false, sortKey: sortKey, asc: asc) } }
         loadToken += 1; let tok = loadToken, p = path, hidden = app?.showHidden ?? false
         // 只有列表为空时才显示「加载中」（避免每次刷新都多一轮界面重绘）
         if items.isEmpty && !loading { loading = true }
-        let key = sortKey, ascending = asc
+        let key = sortKey, ascending = asc, grp = groupKey, searchingNow = searchActive
         DispatchQueue.global(qos: .userInitiated).async {
             let (res, err, denied) = loadDirectory(p, hidden: hidden)
             let sorted = sortItems(res, key: key, asc: ascending)   // 排序也在后台完成
+            let preGrouped = (!searchingNow && grp != .none) ? groupItems(sorted, by: grp) : nil
+            let preOrder = preGrouped?.flatMap { $0.1 }.map { $0.url }
             let free = freeSpace(p)
             let all = Set(res.map { $0.url })   // 选中项比对用的集合也在后台建好
             DispatchQueue.main.async {
                 guard tok == self.loadToken else { return }
+                self.isReloading = false
                 if self.error != err { self.error = err }
                 if self.permissionDenied != denied { self.permissionDenied = denied }
                 self.freeBytes = free
                 let newItems = key == self.sortKey && ascending == self.asc ? sorted : sortItems(res, key: self.sortKey, asc: self.asc)
                 // 内容没变（例如目录监视的重复通知）：什么都不更新，界面不重绘
-                if newItems == self.items && self.cacheVersion >= 0 && !self.items.isEmpty {
+                if newItems == self.items && !self.items.isEmpty && (self.cacheVersion >= 0 || self.indexVersion >= 0 || !self.display.isEmpty) {
                     if self.loading { self.loading = false }
                     self.watch(); return
                 }
@@ -174,7 +187,11 @@ final class TabModel: ObservableObject, Identifiable {
                 }
                 if self.loading { self.loading = false }
                 self.recompute()
+                if let pg = preGrouped, let po = preOrder, !self.searchActive, self.groupKey == grp, key == self.sortKey, ascending == self.asc {
+                    self.groupsCache = pg; self.orderCache = po; self.cacheVersion = self.version
+                }
                 self.app?.noteTags(res)
+                if !self.selection.isEmpty { self.app?.selectionDidChange(self) }
                 self.watch()
             }
         }
@@ -200,18 +217,26 @@ final class TabModel: ObservableObject, Identifiable {
         }
     }
     private func watch() {
-        guard watchedPath != path.path else { return }
-        watcher?.cancel(); watcher = nil; watchedPath = path.path
-        let fd = open(path.path, O_EVTONLY); guard fd >= 0 else { return }
-        let s = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        s.setEventHandler { [weak self] in self?.scheduleReload() }
-        s.setCancelHandler { close(fd) }
-        s.resume(); watcher = s
+        if watcher == nil {
+            let w = FolderWatcher()
+            w.roots = { [weak self] in
+                guard let self = self else { return [] }
+                return [self.path.path] + self.columnChain.map { $0.path }
+            }
+            w.onChange = { [weak self] in self?.scheduleReload() }
+            watcher = w
+        }
+        // 路径没变时只更新 roots 闭包用到的 columnChain，不必重建 FSEvent 流（它会递归收到子路径事件）
+        if watchedPath != path.path {
+            watchedPath = path.path
+            watcher?.start(path: path.path)
+        }
     }
     private func scheduleReload() {
         if pending { return }; pending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self else { return }
+        let gen = reloadGen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self = self, self.reloadGen == gen else { return }
             // 后台文件操作进行中：先不刷新（操作结束时会统一刷新一次），避免批量操作时反复重载列表
             if self.app?.progress != nil { self.pending = false; self.scheduleReload(); return }
             self.pending = false; self.reload()

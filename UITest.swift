@@ -47,6 +47,9 @@ enum TestEnv {
         ud.set(true, forKey: "dual"); ud.set("name", forKey: "sortKey"); ud.set(true, forKey: "sortAsc"); ud.set(false, forKey: "showHidden")
         ud.removeObject(forKey: "listColumns")
         ud.removeObject(forKey: "shelfItems")   // 文件架从空的开始（测试结束会还原用户的文件架）
+        ud.removeObject(forKey: "pinnedFolders")
+        ud.removeObject(forKey: "savedLayouts")
+        ud.removeObject(forKey: "savedSearches")
         for k in ud.dictionaryRepresentation().keys where k.hasPrefix("listColW_") || k.hasPrefix("groupKey") { ud.removeObject(forKey: k) }
         // 列宽等界面记忆用默认值，保证截图稳定（测试结束会还原）
         for k in ud.dictionaryRepresentation().keys where k.hasPrefix("NSTableView") || k.hasPrefix("NSSplitView") || k.hasPrefix("NSWindow Frame") { ud.removeObject(forKey: k) }
@@ -238,6 +241,71 @@ final class UITestRunner {
         }
         if let root = win.contentView?.superview { walk(root) }
         return best
+    }
+    /// 栏与栏之间的 HSplitView（不是侧边栏那一层 NavigationSplitView）。
+    func paneSplitView(needPane1: Bool = false) -> NSSplitView? {
+        guard let root = win.contentView?.superview else { return nil }
+        var hits: [NSSplitView] = []
+        func walk(_ v: NSView) {
+            if let s = v as? NSSplitView, s.isVertical { hits.append(s) }
+            v.subviews.forEach(walk)
+        }
+        walk(root)
+        var found: NSSplitView?
+        for s in hits {
+            var panes = Set<Int>()
+            func collect(_ v: NSView) {
+                if let k = v as? FBKeyView, k.window === win { panes.insert(k.pane) }
+                if let tv = v as? NSTableView, let d = tv.delegate as? FileTable.Coordinator, tv.window === win { panes.insert(d.pane) }
+                v.subviews.forEach(collect)
+            }
+            s.subviews.forEach(collect)
+            // 取最内层（包含第 0 栏的最后一个），避免误伤侧边栏那一层 NavigationSplitView
+            if panes.contains(0) && (!needPane1 || panes.contains(1)) { found = s }
+        }
+        return found
+    }
+    /// 把双栏分割钉在「左栏最小 300、剩余给右栏」。SwiftUI 的 HSplitView 初始分配不稳定，不钉死的话 list-view 截图时而 769、时而 300。
+    /// 只改栏与栏之间那一层，不改 holding priority、不强制 layoutIfNeeded（会和 SwiftUI 的分割视图打架，把主线程卡死）。
+    func pinDualSplit(left: CGFloat = 300) {
+        guard let s = paneSplitView(needPane1: true), s.subviews.count >= 2 else { return }
+        s.setPosition(left, ofDividerAt: 0)
+    }
+    /// 把预览栏钉到指定宽度（基准图 video-preview 是 270）。
+    /// 从预览里的播放按钮（或预览栏本身）往上找到栏与预览之间的分割视图，避免拿错里层或侧边栏那一层。
+    func pinPreviewWidth(_ w: CGFloat) {
+        var start: NSView? = PlayButtonRegistry.marker
+        if start == nil {
+            if let root = win.contentView?.superview {
+                var hits: [NSSplitView] = []
+                func walk(_ v: NSView) {
+                    if let s = v as? NSSplitView, s.isVertical, s.subviews.count >= 2 { hits.append(s) }
+                    v.subviews.forEach(walk)
+                }
+                walk(root)
+                for s in hits {
+                    var panes = Set<Int>()
+                    func collect(_ v: NSView) {
+                        if let k = v as? FBKeyView, k.window === win { panes.insert(k.pane) }
+                        if let tv = v as? NSTableView, let d = tv.delegate as? FileTable.Coordinator, tv.window === win { panes.insert(d.pane) }
+                        v.subviews.forEach(collect)
+                    }
+                    if let last = s.subviews.last {
+                        collect(last)
+                        if panes.isEmpty { start = last }
+                    }
+                }
+            }
+        }
+        var v = start
+        while let cur = v {
+            if let s = cur.superview as? NSSplitView, s.isVertical, s.subviews.count >= 2 {
+                let thick = s.dividerThickness
+                s.setPosition(s.bounds.width - w - thick, ofDividerAt: s.subviews.count - 2)
+                return
+            }
+            v = cur.superview
+        }
     }
     func onDisk(_ p: String) -> Bool { FileManager.default.fileExists(atPath: TestEnv.fixture.appendingPathComponent(p).path) }
     var t: TabModel { app.panes[0].tab }
@@ -459,6 +527,7 @@ final class UITestRunner {
         if TestEnv.debug { print("DEBUG modes \(app.panes[0].tab.viewMode) \(app.panes[1].tab.viewMode)") }
         for w in [1280.0, 900.0] {
             win.setFrame(NSRect(x: -6000, y: -6000, width: w, height: 780), display: true); await settle(0.8)
+            pinDualSplit(left: 300); await settle(0.2)
             for pn in [0, 1] {
                 let cols = visibleCols(pn)
                 let pw = paneRect(pn).width
@@ -469,6 +538,7 @@ final class UITestRunner {
             }
         }
         win.setFrame(NSRect(x: -6000, y: -6000, width: 1280, height: 780), display: true); await settle(0.8)
+        pinDualSplit(left: 300); await settle(0.2)
         shot("list-view-window")
         let rp = paneRect(1)
         shot("list-view", crop: win.contentView!.superview!.convert(rp, from: nil))
@@ -508,6 +578,7 @@ final class UITestRunner {
         t.selection = [F.appendingPathComponent("视频.mp4")]; app.focusActiveTable(); await settle(2.0)
         check("视频预览：选中后不自动播放（没有创建播放器）", MediaPreviewState.created == created0 && MediaPreviewState.player == nil, "created=\(MediaPreviewState.created - created0)")
         check("视频预览：显示播放按钮", PlayButtonRegistry.marker?.window === win)
+        pinPreviewWidth(270); await settle(0.3)
         let pr = paneRect(app.dual ? 1 : 0)
         let full = win.contentView!.superview!
         if TestEnv.debug {
@@ -584,6 +655,23 @@ final class UITestRunner {
         if let iv = sView { click(iv.convert(NSPoint(x: iv.bounds.midX, y: iv.bounds.midY), to: nil)); await settle(0.8) }
         check("点击放大镜展开并聚焦", searchField(in: win) != nil && (win.firstResponder as? NSTextView)?.delegate === searchField(in: win), "fr=\(String(describing: win.firstResponder)) field=\(String(describing: searchField(in: win)))")
         press("\u{1b}", 53); await settle(0.6)
+        // 11c. 窄窗口（900pt）下搜索按钮保留在工具栏可见区（不进 >> 变成灰掉项），点击可正常展开聚焦且展开后仍完整处在窗口内
+        win.setFrame(NSRect(x: -6000, y: -6000, width: 900, height: 780), display: true); await settle(0.8)
+        let searchTBItem = (win.toolbar?.items ?? []).first { $0.label == "搜索" }
+        let visibleInToolbar = (win.toolbar?.visibleItems ?? []).contains { $0 === searchTBItem }
+        check("窄窗口（900pt）：搜索按钮保留在工具栏可见区（不被挤进 >> 溢出菜单）",
+              searchTBItem?.visibilityPriority == .user && visibleInToolbar,
+              "visible=\(visibleInToolbar) pri=\(String(describing: searchTBItem?.visibilityPriority.rawValue))")
+        if let iv = searchTBItem?.view, iv.window === win {
+            click(iv.convert(NSPoint(x: iv.bounds.midX, y: iv.bounds.midY), to: nil)); await settle(0.8)
+        }
+        let expandedVisible = (win.toolbar?.visibleItems ?? []).contains { $0 === searchTBItem }
+        let expandedRect = searchTBItem?.view.map { $0.convert($0.bounds, to: nil) } ?? .zero
+        check("窄窗口（900pt）：点击搜索按钮正常展开并聚焦输入框，且完整显示在工具栏内",
+              expandedVisible && expandedRect.width >= 170 && expandedRect.maxX <= 900 && searchField(in: win) != nil && (win.firstResponder as? NSTextView)?.delegate === searchField(in: win),
+              "visible=\(expandedVisible) rect=\(expandedRect) field=\(String(describing: searchField(in: win)))")
+        press("\u{1b}", 53); await settle(0.4)
+        win.setFrame(NSRect(x: -6000, y: -6000, width: 1280, height: 780), display: true); await settle(0.4)
         writeChecklist()
     }
 

@@ -119,8 +119,16 @@ struct SavedSearch: Codable, Equatable, Identifiable {
     var criteria: [SearchCriterion]
 }
 
-/// 简单的文字输入对话框（存储搜索、重命名已存搜索）
+#if FB_TESTING
+var promptTextOverride: String?
+#endif
+
+/// 简单的文字输入对话框（存储搜索、重命名已存搜索、保存布局、重命名置顶文件夹）
 func promptText(title: String, message: String, initial: String = "") -> String? {
+    #if FB_TESTING
+    if let o = promptTextOverride { return o.trimmingCharacters(in: .whitespaces) }
+    if TestEnv.active { return initial.trimmingCharacters(in: .whitespaces) }
+    #endif
     let a = NSAlert()
     a.messageText = title; a.informativeText = message
     let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
@@ -156,10 +164,10 @@ struct SuggestionsView: View {
             if !recs.isEmpty { section("最近的搜索"); rows(recs) }
         }
         .padding(.vertical, 5)
-        .frame(minWidth: 220, maxWidth: 360)
+        .frame(minWidth: 184, maxWidth: 280)
         .background(.regularMaterial)
         .cornerRadius(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
     }
     func section(_ t: String) -> some View {
         Text(t).font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 3)
@@ -217,10 +225,14 @@ final class SearchSuggestions {
         let host = panel!.contentView!
         host.layoutSubtreeIfNeeded()
         let size = host.fittingSize
-        let r = win.convertToScreen(tf.convert(tf.bounds, to: nil))
-        var x = min(r.minX, (NSScreen.main?.visibleFrame.maxX ?? .greatestFiniteMagnitude) - size.width - 8)
-        x = max(x, NSScreen.main?.visibleFrame.minX ?? x)
-        panel!.setFrame(NSRect(x: x, y: r.minY - size.height - 4, width: max(size.width, r.width), height: size.height), display: true)
+        let tfRect = win.convertToScreen(tf.convert(tf.bounds, to: nil))
+        let w = max(size.width, min(tfRect.width + 26, 220))
+        // 右侧与搜索框外框对齐（且不超出当前窗口右边界与屏幕右边界），避免浮窗往右穿出窗口
+        let boxMaxX = min(tfRect.maxX + 10, win.frame.maxX - 10)
+        let screenMaxX = (win.screen ?? NSScreen.main)?.visibleFrame.maxX ?? .greatestFiniteMagnitude
+        var x = min(tfRect.minX - 18, min(boxMaxX - w, screenMaxX - w - 8))
+        x = max(x, (win.screen ?? NSScreen.main)?.visibleFrame.minX ?? x)
+        panel!.setFrame(NSRect(x: x, y: tfRect.minY - size.height - 6, width: w, height: size.height), display: true)
         if panel!.parent !== win { panel!.parent?.removeChildWindow(panel!); win.addChildWindow(panel!, ordered: .above) }
         if !panel!.isVisible { panel!.orderFront(nil) }
         installMonitors()

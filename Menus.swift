@@ -66,7 +66,9 @@ func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL], bgDir: UR
         m.append(.sub("文件管家", [
             .item("在访达中显示", nil, false, true) { NSWorkspace.shared.activateFileViewerSelecting([dir]) },
             .item("拷贝路径", nil, false, true) { copyPaths([dir]) },
+            .item(app.isPinned(dir) ? "取消置顶" : "置顶到侧边栏", nil, false, true) { app.togglePin(dir) },
             .item("加入书签", nil, false, true) { app.addBookmark(dir) },
+            .item("保存当前布局…", nil, false, true) { app.promptSaveLayout() },
             .item("空间分析", nil, false, true) { app.sizeReq = SizeReq(url: dir) },
             .item(app.showHidden ? "不显示隐藏文件" : "显示隐藏文件", nil, false, true) { app.showHidden.toggle() }]))
         return m
@@ -112,6 +114,8 @@ func contextSpec(app: AppState, tab: TabModel, pane: Int, urls: [URL], bgDir: UR
         extra.append(.item("移动到另一栏", sym("arrow.right.square"), false, true) { app.transfer(urls, to: other, mode: .move) })
     }
     if one, items[0].isDir {
+        let pinned = app.isPinned(urls[0])
+        extra.append(.item(pinned ? "取消置顶" : "置顶到侧边栏", sym(pinned ? "pin.slash" : "pin"), false, true) { app.togglePin(urls[0]) })
         extra.append(.item("加入书签", sym("bookmark"), false, true) { app.addBookmark(urls[0]) })
         extra.append(.item("空间分析", sym("chart.pie"), false, true) { app.sizeReq = SizeReq(url: urls[0]) })
     }

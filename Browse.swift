@@ -33,8 +33,8 @@ final class ThumbCache {
         let i = NSWorkspace.shared.icon(for: t); typeIcons.setObject(i, forKey: ext); return i
     }
     @discardableResult
-    static func requestThumb(_ u: URL, bucket: Int, done: @escaping (NSImage?) -> Void) -> QLThumbnailGenerator.Request? {
-        let key = "\(u.path)|\(bucket)" as NSString
+    static func requestThumb(_ u: URL, bucket: Int, modified: Date? = nil, done: @escaping (NSImage?) -> Void) -> QLThumbnailGenerator.Request? {
+        let key = "\(u.path)|\(bucket)|\(modified?.timeIntervalSince1970 ?? 0)" as NSString
         if let c = images.object(forKey: key) { done(c); return nil }
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let req = QLThumbnailGenerator.Request(fileAt: u, size: CGSize(width: bucket, height: bucket), scale: scale, representationTypes: .thumbnail)
@@ -69,7 +69,7 @@ struct ThumbView: View {
         img = nil
         guard !item.isFolderLike else { return }   // 文件夹直接用图标，不生成缩略图
         let u = item.url
-        req = ThumbCache.requestThumb(u, bucket: bucket) { i in
+        req = ThumbCache.requestThumb(u, bucket: bucket, modified: item.modified) { i in
             guard let i = i else { return }
             if Thread.isMainThread { if u == item.url { img = i } }
             else { DispatchQueue.main.async { if u == item.url { img = i; req = nil } } }
@@ -79,17 +79,25 @@ struct ThumbView: View {
 
 struct QLView: NSViewRepresentable {
     let url: URL?
+    var stamp: String = ""
     func makeNSView(context: Context) -> QLPreviewView {
         let v = QLPreviewView(frame: .zero, style: .normal)!
         v.autostarts = true; v.shouldCloseWithWindow = false
         v.previewItem = url as NSURL?
+        context.coordinator.stamp = stamp
         return v
     }
     func updateNSView(_ v: QLPreviewView, context: Context) {
         let cur = (v.previewItem as? NSURL).map { $0 as URL }
-        if cur != url { v.previewItem = url as NSURL? }
+        if cur != url || context.coordinator.stamp != stamp {
+            context.coordinator.stamp = stamp
+            v.previewItem = nil
+            v.previewItem = url as NSURL?
+        }
     }
-    static func dismantleNSView(_ v: QLPreviewView, coordinator: ()) { v.close() }
+    func makeCoordinator() -> Coord { Coord() }
+    final class Coord { var stamp = "" }
+    static func dismantleNSView(_ v: QLPreviewView, coordinator: Coord) { v.close() }
 }
 
 struct TagDotsView: View {
@@ -354,7 +362,7 @@ struct ColumnPreview: View {
             VStack(spacing: 6) {
                 Spacer(minLength: 8)
                 Group {
-                    if isAVMedia(item.url) { PreviewSurface(url: item.url).frame(width: g.size.width - 32, height: side) }
+                    if isAVMedia(item.url) { PreviewSurface(item: item).frame(width: g.size.width - 32, height: side) }
                     else { ThumbView(item: item, size: side).frame(width: side, height: side) }
                 }
                 .background(GeometryReader { ig in Color.clear.onAppear { record(g, ig) }.onChange(of: ig.size) { _ in record(g, ig) } })
@@ -385,7 +393,7 @@ struct GalleryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 if let it = current {
-                    PreviewSurface(url: it.url).padding(12)
+                    PreviewSurface(item: it).padding(12)
                     Divider()
                     MetaView(item: it).frame(width: 240)
                 } else {
@@ -535,10 +543,10 @@ struct PreviewContent: View {
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 let item = sel.first ?? makeItem(tab.path)
-                PreviewSurface(url: item.url).frame(minHeight: 220, maxHeight: 360).id(item.url)
+                PreviewSurface(item: item).frame(minHeight: 220, maxHeight: 360)
                 Divider()
                 if sel.isEmpty { Text("当前文件夹").font(.caption).foregroundStyle(.secondary).padding(.top, 6) }
-                FinderInfoView(item: item, tab: tab).id(item.url)
+                FinderInfoView(item: item, tab: tab).id("\(item.url.path)|\(item.size)|\(item.modified?.timeIntervalSince1970 ?? 0)")
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))

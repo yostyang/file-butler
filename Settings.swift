@@ -19,6 +19,8 @@ enum Settings {
         static let recentSearches = "recentSearches"
         static let customTags = "customTags"
         static let savedSearches = "savedSearches"
+        static let pinnedFolders = "pinnedFolders"
+        static let savedLayouts = "savedLayouts"
         static let listColumns = "listColumns"
         static let shelfItems = "shelfItems"
         static func paneTabs(_ i: Int) -> String { "pane\(i)Tabs" }
@@ -84,6 +86,20 @@ enum Settings {
             return (try? JSONDecoder().decode([SavedSearch].self, from: d)) ?? []
         }
         set { ud.set(try? JSONEncoder().encode(newValue), forKey: Key.savedSearches) }
+    }
+    static var pinnedFolders: [PinnedFolder] {
+        get {
+            guard let d = ud.data(forKey: Key.pinnedFolders) else { return [] }
+            return (try? JSONDecoder().decode([PinnedFolder].self, from: d)) ?? []
+        }
+        set { ud.set(try? JSONEncoder().encode(newValue), forKey: Key.pinnedFolders) }
+    }
+    static var savedLayouts: [WorkspaceLayout] {
+        get {
+            guard let d = ud.data(forKey: Key.savedLayouts) else { return [] }
+            return (try? JSONDecoder().decode([WorkspaceLayout].self, from: d)) ?? []
+        }
+        set { ud.set(try? JSONEncoder().encode(newValue), forKey: Key.savedLayouts) }
     }
     static func loadPane(_ i: Int) -> (paths: [String], modes: [String], current: Int) {
         (ud.stringArray(forKey: Key.paneTabs(i)) ?? [],

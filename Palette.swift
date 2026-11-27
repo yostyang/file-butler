@@ -9,7 +9,7 @@ struct PaletteCommand {
     let title: String, keywords: String, symbol: String, shortcut: String
     let run: () -> Void
 }
-struct FileCand: Hashable { let url: URL; let isDir: Bool; let source: String }
+struct FileCand: Hashable { let url: URL; let isDir: Bool; let source: String; var alias: String? = nil }
 
 struct PaletteItem: Identifiable {
     enum Kind { case command, folder, file, path }
@@ -82,7 +82,12 @@ enum PaletteEngine {
         }
         add("搜索当前文件夹", "find search 搜索", "magnifyingglass", "⌘F") { app.searchFocus += 1 }
         add("空间分析", "disk usage size 空间", "chart.pie", "⌥⌘S") { app.sizeReq = SizeReq(url: tab.path) }
+        add(app.isPinned(tab.path) ? "取消置顶当前文件夹" : "置顶当前文件夹", "pin 置顶 固定", app.isPinned(tab.path) ? "pin.slash" : "pin") { app.togglePin() }
         add("把当前文件夹加入书签", "bookmark 书签", "bookmark", "⇧⌘B") { app.addBookmark() }
+        add("保存当前布局…", "layout save 布局 保存", "rectangle.split.2x1") { app.promptSaveLayout() }
+        for l in app.layouts {
+            add("布局：\(l.name)（\(l.summary)）", "layout 布局 \(l.name)", l.dual ? "rectangle.split.2x1" : "rectangle") { app.applyLayout(l) }
+        }
         if !app.undoStack.isEmpty { add("撤销上一步文件操作", "undo 撤销", "arrow.uturn.backward", "⌥⌘Z") { app.undo() } }
         if !app.redoStack.isEmpty { add("重做上一步文件操作", "redo 重做", "arrow.uturn.forward", "⌥⇧⌘Z") { app.redo() } }
         add("前往：个人", "home 个人", "house", "⇧⌘H") { app.go(home) }
@@ -94,7 +99,11 @@ enum PaletteEngine {
     /// 打开面板时拍一份内存里已有的列表（不读磁盘）
     static func snapshot(_ app: AppState) -> [FileCand] {
         var out: [FileCand] = [], seen = Set<String>()
-        func put(_ u: URL, _ d: Bool, _ s: String) { let p = u.standardizedFileURL.path; if seen.insert(p).inserted { out.append(FileCand(url: u.standardizedFileURL, isDir: d, source: s)) } }
+        func put(_ u: URL, _ d: Bool, _ s: String, alias: String? = nil) {
+            let p = u.standardizedFileURL.path
+            if seen.insert(p).inserted { out.append(FileCand(url: u.standardizedFileURL, isDir: d, source: s, alias: alias)) }
+        }
+        for p in app.visiblePinnedFolders { put(p.url, true, "置顶", alias: p.alias) }
         let panes = app.dual ? [app.active, 1 - app.active] : [app.active]
         for i in panes { for it in app.panes[i].tab.display.prefix(20000) { put(it.url, it.isFolderLike, i == app.active ? "当前文件夹" : "另一栏") } }
         for u in app.visibleRecents { put(u, true, "最近访问") }
@@ -104,13 +113,14 @@ enum PaletteEngine {
         return out
     }
     static func fileItem(_ f: FileCand, score: Int, app: AppState) -> PaletteItem {
-        return PaletteItem(id: "file:" + f.url.path, title: f.url.path == "/" ? rootVolumeName : f.url.lastPathComponent,
+        let title = (f.alias?.isEmpty == false ? f.alias! : (f.url.path == "/" ? rootVolumeName : f.url.lastPathComponent))
+        return PaletteItem(id: "file:" + f.url.path, title: title,
                            subtitle: abbreviate(f.url.deletingLastPathComponent().path) + " · " + f.source,
                            symbol: f.isDir ? "folder.fill" : "doc", shortcut: "", kind: f.isDir ? .folder : .file, score: score) { alt in
             if alt && !f.isDir { NSWorkspace.shared.open(f.url) } else { app.go(f.url) }
         }
     }
-    /// 排序后的结果：空输入时先列最近访问的文件夹，再列命令
+    /// 排序后的结果：空输入时先列置顶和最近访问的文件夹，再列命令
     static func rank(_ query: String, commands: [PaletteCommand], files: [FileCand], app: AppState, limit: Int = 60) -> [PaletteItem] {
         let q = query.trimmingCharacters(in: .whitespaces)
         var out: [PaletteItem] = []
@@ -118,6 +128,7 @@ enum PaletteEngine {
             out.append(PaletteItem(id: "path:" + p.path, title: "前往 " + abbreviate(p.path), subtitle: "输入的路径", symbol: "arrow.right.circle.fill", shortcut: "↩", kind: .path, score: 2000) { _ in app.go(p) })
         }
         if q.isEmpty {
+            for f in files.filter({ $0.source == "置顶" }).prefix(5) { out.append(fileItem(f, score: 0, app: app)) }
             for f in files.filter({ $0.source == "最近访问" }).prefix(5) { out.append(fileItem(f, score: 0, app: app)) }
             for c in commands { out.append(PaletteItem(id: "cmd:" + c.title, title: c.title, subtitle: "", symbol: c.symbol, shortcut: c.shortcut, kind: .command, score: 0) { _ in c.run() }) }
             return Array(out.prefix(limit))
@@ -126,7 +137,10 @@ enum PaletteEngine {
             let s = max(score(q, c.title) ?? -1, (score(q, c.keywords) ?? -1) - 50)
             if s >= 0 { out.append(PaletteItem(id: "cmd:" + c.title, title: c.title, subtitle: "", symbol: c.symbol, shortcut: c.shortcut, kind: .command, score: s + 5) { _ in c.run() }) }
         }
-        for f in files { if let s = score(q, f.url.lastPathComponent) { out.append(fileItem(f, score: s + (f.isDir ? 2 : 0), app: app)) } }
+        for f in files {
+            let s = max(score(q, f.url.lastPathComponent) ?? -1, f.alias.flatMap { score(q, $0) } ?? -1)
+            if s >= 0 { out.append(fileItem(f, score: s + (f.isDir ? 2 : 0), app: app)) }
+        }
         // 分数相同：命令 > 文件夹 > 文件，再按名称
         out.sort { $0.score != $1.score ? $0.score > $1.score : $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         return Array(out.prefix(limit))

@@ -16,6 +16,50 @@ func recentsOnMountedVolumes(_ urls: [URL], mounted: [String]) -> [URL] {
 struct VolumeInfo: Identifiable { var id: URL { url }; let url: URL; let name: String; let free: Int64; let total: Int64 }
 final class WeakView { weak var v: NSView? }
 
+/// v0.7 置顶文件夹：固定在侧边栏顶部（高于「个人收藏」），支持自定义显示名与排序；外置盘未装载时自动隐藏但保留记录。
+struct PinnedFolder: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var path: String
+    var alias: String?
+    var url: URL { URL(fileURLWithPath: path) }
+    var displayName: String {
+        if let a = alias?.trimmingCharacters(in: .whitespaces), !a.isEmpty { return a }
+        return path == "/" ? rootVolumeName : cachedDisplayName(path)
+    }
+}
+
+/// v0.7 保存布局：记录单/双栏状态、各栏所有标签页路径、显示方式、排序方式及当前激活标签页，一键打开。
+struct TabSnapshot: Codable, Equatable {
+    var path: String
+    var viewMode: String
+    var sortKey: String?
+    var sortAsc: Bool?
+}
+struct PaneSnapshot: Codable, Equatable {
+    var tabs: [TabSnapshot]
+    var current: Int
+}
+struct WorkspaceLayout: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var dual: Bool
+    var activePane: Int
+    var panes: [PaneSnapshot]
+    private static func folderName(_ p: String) -> String {
+        p == "/" ? rootVolumeName : (p as NSString).lastPathComponent
+    }
+    var summary: String {
+        guard let p0 = panes.first, !p0.tabs.isEmpty else { return "" }
+        let t0 = p0.tabs[max(0, min(p0.current, p0.tabs.count - 1))]
+        let left = Self.folderName(t0.path) + (p0.tabs.count > 1 ? " 等\(p0.tabs.count)个" : "")
+        guard dual, panes.count > 1, !panes[1].tabs.isEmpty else { return left }
+        let p1 = panes[1]
+        let t1 = p1.tabs[max(0, min(p1.current, p1.tabs.count - 1))]
+        let right = Self.folderName(t1.path) + (p1.tabs.count > 1 ? " 等\(p1.tabs.count)个" : "")
+        return "\(left) ⇄ \(right)"
+    }
+}
+
 // MARK: - App state
 final class AppState: ObservableObject {
     static let maxUndoDepth = 50
@@ -29,6 +73,8 @@ final class AppState: ObservableObject {
         didSet { Settings.showPreview = showPreview } }
     @Published var iconSize: Double = Settings.iconSize {
         didSet { Settings.iconSize = iconSize } }
+    @Published var pinnedFolders: [PinnedFolder] = []
+    @Published var layouts: [WorkspaceLayout] = []
     @Published var bookmarks: [URL] = []
     @Published var recents: [URL] = []
     @Published var recentSearches: [String] = Settings.recentSearches
@@ -73,6 +119,8 @@ final class AppState: ObservableObject {
         let icloud = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
         if fm.fileExists(atPath: icloud.path) { f.append(icloud) }
         favorites = f
+        pinnedFolders = Settings.pinnedFolders
+        layouts = Settings.savedLayouts
         bookmarks = Settings.bookmarks
         recents = Settings.recents
         savedSearches = Settings.savedSearches
@@ -208,6 +256,143 @@ final class AppState: ObservableObject {
         bookmarks.append(u); Settings.bookmarks = bookmarks
     }
     func removeBookmark(_ u: URL) { bookmarks.removeAll { $0.path == u.path }; Settings.bookmarks = bookmarks }
+
+    // MARK: v0.7 置顶文件夹（固定在侧边栏最上方；未装载外置盘上的置顶项先隐藏、盘接上后恢复，不读磁盘）
+    var visiblePinnedFolders: [PinnedFolder] {
+        let mounted = Set(recentsOnMountedVolumes(pinnedFolders.map { $0.url }, mounted: volumes.map { $0.url.path }).map { $0.path })
+        return pinnedFolders.filter { mounted.contains($0.path) }
+    }
+    func isPinned(_ u: URL) -> Bool {
+        let p = u.standardizedFileURL.path
+        return pinnedFolders.contains { $0.path == p }
+    }
+    func pinFolder(_ u: URL? = nil, alias: String? = nil) {
+        let target = (u ?? (activeTab.viewMode == .column && !activeTab.isGlobalSearch ? activeTab.columnChain.last : nil) ?? activeTab.path).standardizedFileURL
+        let cleanAlias = alias?.trimmingCharacters(in: .whitespaces)
+        if let i = pinnedFolders.firstIndex(where: { $0.path == target.path }) {
+            if let a = cleanAlias { pinnedFolders[i].alias = a.isEmpty ? nil : a }
+        } else {
+            pinnedFolders.append(PinnedFolder(path: target.path, alias: (cleanAlias?.isEmpty == false) ? cleanAlias : nil))
+        }
+        Settings.pinnedFolders = pinnedFolders
+    }
+    func unpinFolder(_ u: URL) {
+        let p = u.standardizedFileURL.path
+        pinnedFolders.removeAll { $0.path == p }
+        Settings.pinnedFolders = pinnedFolders
+    }
+    func togglePin(_ u: URL? = nil) {
+        let target = (u ?? (activeTab.viewMode == .column && !activeTab.isGlobalSearch ? activeTab.columnChain.last : nil) ?? activeTab.path).standardizedFileURL
+        if isPinned(target) { unpinFolder(target) } else { pinFolder(target) }
+    }
+    func renamePinnedFolder(_ item: PinnedFolder, to alias: String) {
+        guard let i = pinnedFolders.firstIndex(where: { $0.id == item.id }) else { return }
+        let t = alias.trimmingCharacters(in: .whitespaces)
+        pinnedFolders[i].alias = t.isEmpty ? nil : t
+        Settings.pinnedFolders = pinnedFolders
+    }
+    func movePinnedFolder(_ item: PinnedFolder, by delta: Int) {
+        guard let i = pinnedFolders.firstIndex(where: { $0.id == item.id }) else { return }
+        let j = i + delta
+        guard j >= 0 && j < pinnedFolders.count else { return }
+        pinnedFolders.swapAt(i, j)
+        Settings.pinnedFolders = pinnedFolders
+    }
+    func openInNewTab(_ u: URL, pane: Int? = nil) {
+        let idx = pane ?? active
+        let p = panes[idx]
+        let t = TabModel(path: u, app: self, mode: p.tab.viewMode)
+        p.tabs.insert(t, at: p.current + 1); p.current += 1; active = idx; touch(); focusActiveTable()
+    }
+    func openInOtherPane(_ u: URL) {
+        if !dual { dual = true }
+        let other = 1 - active
+        panes[other].tab.navigate(u)
+        active = other; touch(); focusActiveTable()
+    }
+
+    // MARK: v0.7 保存布局（两栏、各标签页路径、显示方式与排序一键保存和恢复）
+    var defaultLayoutName: String {
+        if dual, panes.count >= 2 { return "\(panes[0].tab.title) · \(panes[1].tab.title)" }
+        return activeTab.title
+    }
+    private func snapshotPanes() -> [PaneSnapshot] {
+        panes.map { p in
+            PaneSnapshot(
+                tabs: p.tabs.map { t in
+                    let target = (t.viewMode == .column && !t.isGlobalSearch ? t.columnChain.last : nil) ?? t.path
+                    return TabSnapshot(path: target.path, viewMode: t.viewMode.rawValue, sortKey: t.sortKey.rawValue, sortAsc: t.asc)
+                },
+                current: p.current
+            )
+        }
+    }
+    @discardableResult func saveCurrentLayout(name: String) -> WorkspaceLayout {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let finalName = trimmed.isEmpty ? defaultLayoutName : trimmed
+        let snap = WorkspaceLayout(name: finalName, dual: dual, activePane: active, panes: snapshotPanes())
+        if let i = layouts.firstIndex(where: { $0.name == finalName }) {
+            var updated = snap; updated.id = layouts[i].id
+            layouts[i] = updated
+            Settings.savedLayouts = layouts
+            return updated
+        }
+        layouts.append(snap)
+        Settings.savedLayouts = layouts
+        return snap
+    }
+    func promptSaveLayout() {
+        if let n = promptText(title: "保存布局", message: "把当前单/双栏、各标签页路径和显示方式存为一个布局，以后点一下就能恢复。", initial: defaultLayoutName) {
+            saveCurrentLayout(name: n)
+        }
+    }
+    func updateLayout(_ l: WorkspaceLayout) {
+        guard let i = layouts.firstIndex(where: { $0.id == l.id }) else { return }
+        layouts[i].dual = dual
+        layouts[i].activePane = active
+        layouts[i].panes = snapshotPanes()
+        Settings.savedLayouts = layouts
+    }
+    func renameLayout(_ l: WorkspaceLayout, to name: String) {
+        let t = name.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty, let i = layouts.firstIndex(where: { $0.id == l.id }) else { return }
+        layouts[i].name = t
+        Settings.savedLayouts = layouts
+    }
+    func removeLayout(_ l: WorkspaceLayout) {
+        layouts.removeAll { $0.id == l.id }
+        Settings.savedLayouts = layouts
+    }
+    func applyLayout(_ l: WorkspaceLayout) {
+        var missing: [String] = []
+        for i in 0..<min(2, l.panes.count) {
+            let ps = l.panes[i]
+            var newTabs: [TabModel] = []
+            for ts in ps.tabs {
+                if fm.fileExists(atPath: ts.path) {
+                    let mode = ViewMode(rawValue: ts.viewMode) ?? .list
+                    let tab = TabModel(path: URL(fileURLWithPath: ts.path), app: self, mode: mode)
+                    if let sk = ts.sortKey.flatMap(SortKey.init(rawValue:)), let sa = ts.sortAsc, (sk != tab.sortKey || sa != tab.asc) {
+                        tab.setSort(sk, asc: sa)
+                    }
+                    newTabs.append(tab)
+                } else {
+                    missing.append(ts.path)
+                }
+            }
+            if !newTabs.isEmpty {
+                panes[i].tabs = newTabs
+                panes[i].current = min(max(0, ps.current), newTabs.count - 1)
+            }
+        }
+        if dual != l.dual { dual = l.dual }
+        active = l.dual ? min(max(0, l.activePane), 1) : 0
+        touch()
+        focusActiveTable()
+        if !missing.isEmpty {
+            showError("部分布局路径未打开", "以下文件夹不存在或所在磁盘未装载：\n" + missing.joined(separator: "\n"))
+        }
+    }
     // MARK: 最近搜索 / 已存搜索（仿访达：搜索建议、智能文件夹）
     func recordSearch(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespaces)

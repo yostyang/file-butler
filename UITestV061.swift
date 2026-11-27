@@ -331,6 +331,31 @@ extension UITestRunner {
         check("文件夹快速查看：Esc 关闭", !peek.isVisible)
         peek.close()
 
+        // ===== 8. v0.7：置顶文件夹 + 保存布局 =====
+        app.pinnedFolders = []; Settings.pinnedFolders = []
+        app.layouts = []; Settings.savedLayouts = []
+        await go(0, D, .list); await go(1, S, .list); await clickPane(0); app.focusPane(0); await settle(0.3)
+        if let pt = rowPoint(0, "下载") {
+            let titles = await rightClickMenu(pt, choose: "置顶到侧边栏")
+            await settle(0.3)
+            check("置顶文件夹：文件夹右键有「置顶到侧边栏」并成功置顶", titles.contains("置顶到侧边栏") && app.isPinned(S) && samePath(app.visiblePinnedFolders.first?.url, S), titles.suffix(6).joined(separator: " | "))
+        } else { check("置顶文件夹：找到「下载」行", false) }
+        // 保存当前双栏布局（左：v061，右：下载），切走后通过命令面板一键恢复
+        let savedLayout = app.saveCurrentLayout(name: "剪辑布局")
+        await go(0, D.appendingPathComponent("空文件夹"), .icon); app.dual = false; await settle(0.4)
+        let okPal = await openPalette()
+        type("剪辑布局")
+        await waitUntil(2) { self.app.palette.results.first?.title.contains("剪辑布局") == true }
+        press("\r", 36)
+        await waitUntil(3) { !self.app.palette.visible && self.app.dual && samePath(self.app.panes[0].tab.path, D) && samePath(self.app.panes[1].tab.path, S) }
+        check("保存布局：通过命令面板一键恢复双栏、路径与显示方式",
+              okPal && app.dual && samePath(app.panes[0].tab.path, D) && app.panes[0].tab.viewMode == .list && samePath(app.panes[1].tab.path, S),
+              "dual=\(app.dual) L=\(app.panes[0].tab.path.lastPathComponent) R=\(app.panes[1].tab.path.lastPathComponent)")
+        _ = savedLayout
+        app.pinnedFolders = []; Settings.pinnedFolders = []
+        app.layouts = []; Settings.savedLayouts = []
+        await settle(0.2)
+
         // 收尾
         DragMods.override = []
         for i in 0..<2 { await go(i, entry[i].0, entry[i].1) }

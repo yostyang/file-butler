@@ -106,7 +106,7 @@ final class IconItem: NSCollectionViewItem {
         let bucket = size <= 64 ? 64 : size <= 128 ? 128 : 256
         if !it.isFolderLike {
             let u = it.url
-            thumbReq = ThumbCache.requestThumb(u, bucket: bucket) { [weak self] img in
+            thumbReq = ThumbCache.requestThumb(u, bucket: bucket, modified: it.modified) { [weak self] img in
                 guard let img = img else { return }
                 let apply = { if self?.url == u { self?.iv.image = img; self?.thumbReq = nil } }
                 if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }

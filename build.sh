@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 APP_SRC="App.swift Settings.swift FileOps.swift TabModel.swift Progress.swift Transfer.swift IconCollection.swift Model.swift Controller.swift FileTable.swift Browse.swift Views.swift SizeAnalysis.swift Bench.swift Menus.swift Media.swift BatchRename.swift Shelf.swift Palette.swift FolderPeek.swift Search.swift FastSearch.swift"
-TEST_SRC="SelfTest.swift SelfTestV06.swift UITest.swift UITestBasics.swift UITestV06.swift UITestV061.swift"
+TEST_SRC="SelfTest.swift SelfTestV06.swift SelfTestV063.swift UITest.swift UITestBasics.swift UITestV06.swift UITestV061.swift"
 # 正式构建不包含测试代码；仅在 FB_TESTING=1（由 test.sh 设置）时编入自测与界面测试
 if [ -n "${FB_TESTING:-}" ]; then
   SRC="$APP_SRC $TEST_SRC"

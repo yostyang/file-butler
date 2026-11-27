@@ -159,6 +159,7 @@ struct FileTable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
         let app: AppState; var tab: TabModel; var pane: Int
         var rows: [Row] = []; var lastVersion = -1; var suppress = false
+        var lastGroupKey: GroupKey = .none, lastSortKey: SortKey = .name, lastAsc = true, lastPath = ""
         /// 表格自己刚写回的选中集合：SwiftUI 回调 updateNSView 时不必再逐项比较一遍
         var pushedSelection: Set<URL> = []
         weak var table: FBTableView?
@@ -248,16 +249,18 @@ struct FileTable: NSViewRepresentable {
                 if editingURL != nil { return }
                 lastVersion = tab.version
                 let old = rows
+                let orderChanged = lastGroupKey != tab.groupKey || lastSortKey != tab.sortKey || lastAsc != tab.asc || lastPath != tab.path.path
+                lastGroupKey = tab.groupKey; lastSortKey = tab.sortKey; lastAsc = tab.asc; lastPath = tab.path.path
                 if tab.groupKey == .none || tab.isGlobalSearch { rows = tab.display.map { .item($0) } }
                 else { rows = tab.groups.flatMap { g in [Row.header(g.0, g.1.count)] + g.1.map { Row.item($0) } } }
                 layoutColumns()
                 suppress = true
                 let d = NSSortDescriptor(key: tab.sortKey.rawValue, ascending: tab.asc)
                 if tv.sortDescriptors.first != d { tv.sortDescriptors = [d] }
-                if !applyIncremental(tv, old: old) { tv.reloadData() }
+                if orderChanged || !applyIncremental(tv, old: old) { tv.reloadData() }
                 suppress = false
                 applySelection()
-            } else if tab.selection != pushedSelection, Set(selectedURLs) != tab.selection { applySelection() }
+            } else if !tab.isReloading, tab.selection != pushedSelection, Set(selectedURLs) != tab.selection { applySelection() }
             if app.inlineRename != nil && editingURL == nil { DispatchQueue.main.async { self.startInlineRename() } }
         }
 
@@ -313,6 +316,12 @@ struct FileTable: NSViewRepresentable {
         func applyIncremental(_ tv: NSTableView, old: [Row]) -> Bool {
             func key(_ r: Row) -> String { switch r { case .header(let t, _): return "\u{1}" + t; case .item(let it): return it.url.path } }
             guard !old.isEmpty, !rows.isEmpty, tv.numberOfRows == old.count else { return false }
+            // 大列表（> 300 行）且行数不变时（如 1000 项批量重命名）：先看可见行路径是否变了，变了直接走 reloadData，省去构造上千项字符串数组与集合
+            if old.count == rows.count && rows.count > 300 {
+                let vis = tv.rows(in: tv.visibleRect)
+                let end = min(vis.location + vis.length, rows.count)
+                for i in vis.location..<end where key(old[i]) != key(rows[i]) { return false }
+            }
             let ok = old.map(key), nk = rows.map(key)
             if ok == nk {
                 // 行没变：只刷新内容变了的可见行
@@ -352,10 +361,18 @@ struct FileTable: NSViewRepresentable {
         func applySelection() {
             guard let tv = table else { return }
             let sel = tab.selection
-            var idx = IndexSet(), got = Set<URL>()
-            for (i, r) in rows.enumerated() { if case .item(let it) = r, sel.contains(it.url) { idx.insert(i); got.insert(it.url) } }
-            // 选中项的写法和列表不同（/tmp 与 /private/tmp 这类同一位置的两种写法，例如「前往」或命令面板选中的文件）：按名称在当前文件夹里对上
-            if got.count < sel.count && !tab.isGlobalSearch {
+            pushedSelection = sel
+            guard !sel.isEmpty else {
+                if !tv.selectedRowIndexes.isEmpty { suppress = true; tv.deselectAll(nil); suppress = false }
+                return
+            }
+            var idx = IndexSet()
+            for (i, r) in rows.enumerated() { if case .item(let it) = r, sel.contains(it.url) { idx.insert(i) } }
+            // 选中项的写法和列表不同（/tmp 与 /private/tmp 这类同一位置的两种写法，例如「前往」或命令面板选中的文件）：按名称在当前文件夹里对上。
+            // 大量选中项还没刷新完成时（如 1000 项批量重命名刚改完 selection、目录还在后台重读）不在主线程做全量按名匹配。
+            if idx.count < sel.count && sel.count - idx.count <= 200 && !tab.isGlobalSearch {
+                var got = Set<URL>(); got.reserveCapacity(idx.count)
+                for i in idx { if case .item(let it) = rows[i] { got.insert(it.url) } }
                 let map = matchByName(Array(sel.subtracting(got)), dir: tab.path, display: tab.display)
                 if !map.isEmpty {
                     let want = Set(map.values)
@@ -363,7 +380,9 @@ struct FileTable: NSViewRepresentable {
                     tab.adoptSelectionForms(map, expected: sel)
                 }
             }
-            suppress = true; tv.selectRowIndexes(idx, byExtendingSelection: false); suppress = false
+            if tv.selectedRowIndexes != idx {
+                suppress = true; tv.selectRowIndexes(idx, byExtendingSelection: false); suppress = false
+            }
             if let f = idx.first { tv.scrollRowToVisible(f) }
         }
 

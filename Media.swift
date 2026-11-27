@@ -94,11 +94,19 @@ struct MediaPreview: View {
     }
 }
 
-/// 预览区使用的内容：音视频用不自动播放的 MediaPreview，其他用快速查看
+/// 预览区使用的内容：音视频用不自动播放的 MediaPreview，其他用快速查看。
+/// stamp 带上修改时间和大小：外部改写同一个文件后预览会重新加载，而不是一直显示旧内容。
 struct PreviewSurface: View {
     let url: URL
+    var stamp: String = ""
+    init(url: URL, stamp: String = "") { self.url = url; self.stamp = stamp }
+    init(item: FileItem) {
+        url = item.url
+        stamp = "\(item.modified?.timeIntervalSince1970 ?? 0)|\(item.size)"
+    }
     var body: some View {
-        if isAVMedia(url) { MediaPreview(url: url).id(url) } else { QLView(url: url) }
+        // 不要在外层包 Group().id(...)：那会重挂整个预览栏，HSplitView 容易把预览栏收成 minWidth 240（基准图是 270）。
+        if isAVMedia(url) { MediaPreview(url: url).id("\(url.path)|\(stamp)") } else { QLView(url: url, stamp: stamp) }
     }
 }
 

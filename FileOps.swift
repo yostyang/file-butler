@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import CoreServices
 
 let accentA = Color(red: 0.42, green: 0.36, blue: 0.98), accentB = Color(red: 0.18, green: 0.70, blue: 0.96)
 let accentGrad = LinearGradient(colors: [accentA, accentB], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -45,6 +46,9 @@ let listKeySet = Set(listKeys)
 func makeItem(_ raw: URL) -> FileItem { makeItem(raw, standardize: true) }
 func makeItem(_ raw: URL, standardize: Bool) -> FileItem {
     var u = standardize ? raw.standardizedFileURL : raw
+    // 只有单独传入的旧 URL（standardize == true）才需先清缓存；
+    // contentsOfDirectory(includingPropertiesForKeys:) 刚通过 getattrlistbulk 预取的 URL（standardize == false）直接用内核预取结果，避免退化为逐个文件重读磁盘
+    if standardize { u.removeAllCachedResourceValues() }
     let v = try? u.resourceValues(forKeys: listKeySet)
     u.removeAllCachedResourceValues()   // 不让每个 URL 一直挂着属性缓存，省内存
     let isDir = v?.isDirectory ?? false, isPkg = v?.isPackage ?? false
@@ -64,14 +68,22 @@ func loadDirectory(_ p: URL, hidden: Bool) -> (items: [FileItem], err: String?, 
 }
 
 func sortItems(_ a: [FileItem], key: SortKey, asc: Bool) -> [FileItem] {
-    a.sorted { x, y in
-        let byName = x.name.localizedStandardCompare(y.name) == .orderedAscending
+    guard a.count > 1 else { return a }
+    return a.sorted { x, y in
         let r: Bool
         switch key {
-        case .name: r = byName
-        case .size: r = x.size == y.size ? byName : x.size < y.size
-        case .date: r = (x.modified ?? .distantPast) < (y.modified ?? .distantPast)
-        case .kind: r = x.kind == y.kind ? byName : x.kind.localizedStandardCompare(y.kind) == .orderedAscending
+        case .name:
+            r = x.name.localizedStandardCompare(y.name) == .orderedAscending
+        case .size:
+            if x.size != y.size { r = x.size < y.size }
+            else { r = x.name.localizedStandardCompare(y.name) == .orderedAscending }
+        case .date:
+            let dx = x.modified ?? .distantPast, dy = y.modified ?? .distantPast
+            if dx != dy { r = dx < dy }
+            else { r = x.name.localizedStandardCompare(y.name) == .orderedAscending }
+        case .kind:
+            if x.kind != y.kind { r = x.kind.localizedStandardCompare(y.kind) == .orderedAscending }
+            else { r = x.name.localizedStandardCompare(y.name) == .orderedAscending }
         }
         return asc ? r : !r
     }
@@ -90,22 +102,30 @@ func tagColor(_ name: String) -> NSColor? {
 func groupItems(_ items: [FileItem], by k: GroupKey) -> [(String, [FileItem])] {
     guard k != .none else { return [("", items)] }
     let cal = Calendar.current, now = Date()
+    let nowTs = now.timeIntervalSince1970
+    let startOfToday = cal.startOfDay(for: now).timeIntervalSince1970
+    let startOfYesterday = startOfToday - 86400
+    let sevenDaysAgo = nowTs - 7 * 86400
+    let thirtyDaysAgo = nowTs - 30 * 86400
+    let curYear = cal.component(.year, from: now)
+    let startOfYear = (cal.date(from: DateComponents(year: curYear, month: 1, day: 1)) ?? now).timeIntervalSince1970
     func label(_ it: FileItem) -> (String, Int) {
         switch k {
         case .none: return ("", 0)
         case .name:
-            let c = it.name.first.map { String($0).uppercased() } ?? "#"
-            return (c.rangeOfCharacter(from: .letters) != nil ? c : "#", 0)
+            if let ch = it.name.first, ch.isLetter { return (String(ch).uppercased(), 0) }
+            return ("#", 0)
         case .kind: return (it.isFolderLike ? "文件夹" : (it.kind.isEmpty ? "其他" : it.kind), it.isFolderLike ? 0 : 1)
         case .date:
             guard let d = it.modified else { return ("未知", 9) }
-            if cal.isDateInToday(d) { return ("今天", 0) }
-            if cal.isDateInYesterday(d) { return ("昨天", 1) }
-            let days = now.timeIntervalSince(d) / 86400
-            if days < 7 { return ("过去 7 天", 2) }
-            if days < 30 { return ("过去 30 天", 3) }
-            if cal.component(.year, from: d) == cal.component(.year, from: now) { return ("今年早些时候", 4) }
-            return ("\(cal.component(.year, from: d)) 年", 10000 - cal.component(.year, from: d))
+            let ts = d.timeIntervalSince1970
+            if ts >= startOfToday { return ("今天", 0) }
+            if ts >= startOfYesterday { return ("昨天", 1) }
+            if ts > sevenDaysAgo { return ("过去 7 天", 2) }
+            if ts > thirtyDaysAgo { return ("过去 30 天", 3) }
+            if ts >= startOfYear { return ("今年早些时候", 4) }
+            let y = cal.component(.year, from: d)
+            return ("\(y) 年", 10000 - y)
         case .size:
             if it.isFolderLike { return ("文件夹", 0) }
             let s = it.size
@@ -359,4 +379,95 @@ func withoutNested(_ urls: [URL]) -> [URL] {
     var out: [URL] = []; out.reserveCapacity(urls.count)
     for (u, p) in zip(urls, paths) where !covered((p as NSString).deletingLastPathComponent) { out.append(u) }
     return out
+}
+
+/// 把 /tmp 和 /private/tmp、/var 和 /private/var 这类系统固定软链接快速规整成同一路径；
+/// 优先走纯字符串处理（避免在 FSEvents 高频回调里逐条调磁盘 fileExists / resolvingSymlinksInPath）。
+func resolvedFilePath(_ p: String) -> String {
+    var s = (p as NSString).standardizingPath
+    if s.count > 1 && s.hasSuffix("/") { s.removeLast() }
+    if s == "/tmp" || s.hasPrefix("/tmp/") { return "/private" + s }
+    if s == "/var" || s.hasPrefix("/var/") { return "/private" + s }
+    return s
+}
+
+/// 目录监视只关心当前文件夹和分栏视图里打开的各栏：子文件夹深处的改动不触发重读（大目录更省）。
+func folderWatchIsRelevant(eventPath: String, flags: FSEventStreamEventFlags, roots: [String]) -> Bool {
+    return folderWatchIsRelevant(eventPath: eventPath, flags: flags, resolvedRoots: Set(roots.map(resolvedFilePath)))
+}
+
+func folderWatchIsRelevant(eventPath: String, flags: FSEventStreamEventFlags, resolvedRoots rset: Set<String>) -> Bool {
+    let special = FSEventStreamEventFlags(
+        kFSEventStreamEventFlagMustScanSubDirs |
+        kFSEventStreamEventFlagUserDropped |
+        kFSEventStreamEventFlagKernelDropped |
+        kFSEventStreamEventFlagRootChanged |
+        kFSEventStreamEventFlagMount |
+        kFSEventStreamEventFlagUnmount)
+    if flags & special != 0 { return true }
+    let ev = resolvedFilePath(eventPath)
+    if rset.contains(ev) { return true }
+    let parent = (ev as NSString).deletingLastPathComponent
+    return rset.contains(parent)
+}
+
+/// 用 FSEvents 的文件级事件监视目录。DispatchSource 只盯目录本身的 vnode，
+/// 原地改文件内容（AI 工具 / 编辑器常用的写法）不会通知，分栏视图里更深一层的改动也不会通知。
+final class FolderWatcher {
+    var roots: () -> [String] = { [] }
+    var onChange: (() -> Void)?
+    private var stream: FSEventStreamRef?
+    private var watched = ""
+
+    func start(path: String) {
+        let norm = resolvedFilePath(path)
+        if watched == norm, stream != nil { return }
+        stop()
+        watched = norm
+        var ctx = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil, release: nil, copyDescription: nil)
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagUseCFTypes |
+            kFSEventStreamCreateFlagFileEvents |
+            kFSEventStreamCreateFlagNoDefer)
+        guard let s = FSEventStreamCreate(
+            nil,
+            { _, info, num, eventPaths, eventFlags, _ in
+                guard let info = info else { return }
+                let w = Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue()
+                let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] ?? []
+                let rset = Set(w.roots().map(resolvedFilePath))
+                guard !rset.isEmpty else { return }
+                var relevant = false
+                for i in 0..<Int(num) {
+                    let p = i < paths.count ? paths[i] : ""
+                    if folderWatchIsRelevant(eventPath: p, flags: eventFlags[i], resolvedRoots: rset) {
+                        relevant = true; break
+                    }
+                }
+                if relevant { w.onChange?() }
+            },
+            &ctx,
+            [norm] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.15,
+            flags
+        ) else { return }
+        FSEventStreamSetDispatchQueue(s, DispatchQueue.main)
+        FSEventStreamStart(s)
+        stream = s
+    }
+
+    func stop() {
+        guard let s = stream else { watched = ""; return }
+        FSEventStreamStop(s)
+        FSEventStreamInvalidate(s)
+        FSEventStreamRelease(s)
+        stream = nil
+        watched = ""
+    }
+
+    deinit { stop() }
 }

@@ -248,6 +248,8 @@ enum SelfTest {
 
         // v0.6：批量重命名、文件架、命令面板
         v06(root: root, report: check)
+        // v0.6.3 / v0.7：当前文件夹被外部改写后及时刷新
+        v063(root: root, report: check)
 
         // clean up: our own test artifacts only
         for u in trashLeftovers where u.path.contains("/.Trash/") { try? fm.removeItem(at: u) }

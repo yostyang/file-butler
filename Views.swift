@@ -4,6 +4,13 @@ import Combine
 
 struct ContentView: View {
     @EnvironmentObject var app: AppState
+    private var previewMinWidth: CGFloat {
+        #if FB_TESTING
+        return TestEnv.active ? 270 : 240
+        #else
+        return 240
+        #endif
+    }
     var body: some View {
         NavigationSplitView {
             SidebarView().navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
@@ -12,7 +19,7 @@ struct ContentView: View {
                 HSplitView {
                     PaneView(pane: app.panes[0], index: 0)
                     if app.dual { PaneView(pane: app.panes[1], index: 1) }
-                    if app.showPreview { PreviewPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480) }
+                    if app.showPreview { PreviewPanel().frame(minWidth: previewMinWidth, idealWidth: 300, maxWidth: 480) }
                 }
                 ShelfContainer(shelf: app.shelf)
                 Divider()
@@ -151,7 +158,7 @@ struct SearchBox: View {
         // 单一容器 + 宽度动画 = 访达式放大镜滑开成搜索框；容器始终挂载，状态同步不会丢
         HStack(spacing: 4) {
             // 折叠态和其他工具栏图标同号，展开后退为框内小图标
-            Image(systemName: "magnifyingglass").font(.system(size: collapsed ? 17 : 12)).foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: collapsed ? 15 : 12)).foregroundStyle(.secondary)
                 .contentShape(Rectangle())
                 // 折叠：点按展开；展开：点按呼出搜索建议（含最近搜索），替代访达放大镜菜单
                 .onTapGesture { expand() }
@@ -163,24 +170,27 @@ struct SearchBox: View {
                         Text("内容").font(.system(size: 11, weight: .medium))
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     }
-                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Capsule().fill(accentA.opacity(0.2)))
                     .contentShape(Rectangle())
                     .onTapGesture { tab.matchMode = .name }
                 }
-                TextField("搜索", text: $text).textFieldStyle(.plain).focused($focused)
+                TextField("搜索", text: $text).textFieldStyle(.plain).font(.system(size: 12)).focused($focused)
                     .onExitCommand { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
                 if !text.isEmpty || chrome.tagFilter != nil {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.secondary)
                         .contentShape(Rectangle())
                         .onTapGesture { text = ""; tab.clearSearch(); expanded = false; focused = false; app.focusActiveTable() }
                 }
             }
         }
-        .padding(.horizontal, collapsed ? 6 : 7).frame(width: collapsed ? 30 : 190, height: 22)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor).opacity(collapsed ? 0 : 1)))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(focused ? accentA : Color.primary.opacity(collapsed ? 0 : 0.15), lineWidth: focused ? 1.5 : 1))
-        .clipped()
+        .padding(.horizontal, collapsed ? 6 : 8)
+        .frame(width: collapsed ? 28 : 172, height: 20)
+        .background(Capsule().fill(Color(nsColor: .textBackgroundColor).opacity(collapsed ? 0 : 1)))
+        .overlay(Capsule().strokeBorder(focused ? accentA.opacity(0.85) : Color.primary.opacity(collapsed ? 0 : 0.16), lineWidth: 1))
+        .padding(.leading, collapsed ? 0 : 2)
+        .padding(.trailing, collapsed ? 0 : 4)
+        .background(SearchToolbarAnchor(app: app, collapsed: collapsed))
         .contentShape(Rectangle())
         .onTapGesture { if collapsed { expand() } }
         .animation(.snappy(duration: 0.2), value: collapsed)
@@ -221,20 +231,129 @@ struct SearchBox: View {
     }
 }
 
+/// 保证搜索框在窄窗口下始终留在工具栏上、不被挤进「>>」溢出菜单而变成不可点击项：
+/// 1. 把搜索所在 NSToolbarItem 的 visibilityPriority 设为 .user（最高），并把左侧次要操作按钮设为递减的负优先级（窗口缩窄时先收起预览、空间分析等）；
+/// 2. 同时配置可用的 menuFormRepresentation（「搜索」），即使极端宽度下进入溢出菜单也可点击展开；
+/// 3. 展开/收起时通知工具栏重新计算可见项与布局。
+struct SearchToolbarAnchor: NSViewRepresentable {
+    let app: AppState
+    let collapsed: Bool
+    func makeNSView(context: Context) -> AnchorView {
+        let v = AnchorView()
+        v.app = app
+        return v
+    }
+    func updateNSView(_ v: AnchorView, context: Context) {
+        v.app = app
+        v.configureToolbar(collapsedChanged: v.lastCollapsed != collapsed)
+        v.lastCollapsed = collapsed
+    }
+    final class AnchorView: NSView {
+        weak var app: AppState?
+        var lastCollapsed: Bool?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureToolbar(collapsedChanged: true)
+            DispatchQueue.main.async { [weak self] in self?.configureToolbar(collapsedChanged: false) }
+        }
+        func configureToolbar(collapsedChanged: Bool) {
+            guard let w = window, let tb = w.toolbar else { return }
+            let items = tb.items
+            guard !items.isEmpty else { return }
+            var searchIdx: Int?
+            for (i, it) in items.enumerated() {
+                if let iv = it.view, self.isDescendant(of: iv) {
+                    searchIdx = i
+                    if it.visibilityPriority != .user { it.visibilityPriority = .user }
+                    it.label = "搜索"
+                    it.paletteLabel = "搜索"
+                    if collapsedChanged {
+                        invalidateChain()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.invalidateChain() }
+                    }
+                    break
+                }
+            }
+            // 保留左侧导航按钮（边栏切换、后退、前进、上级，前 5 项）默认优先级；
+            // 把中间与右侧功能按钮设为从左到右递减的负优先级，窗口变窄或搜索框展开时从右往左依次收进「>>」，搜索框始终留在工具栏最右侧可点击位置。
+            let end = searchIdx ?? items.count
+            if end > 5 {
+                for i in 5..<end {
+                    let pri = NSToolbarItem.VisibilityPriority(rawValue: -100 - Int(i))
+                    if items[i].visibilityPriority != pri { items[i].visibilityPriority = pri }
+                }
+            }
+            if collapsedChanged {
+                tb.validateVisibleItems()
+            }
+        }
+        private func invalidateChain() {
+            var cur: NSView? = self
+            while let c = cur {
+                c.invalidateIntrinsicContentSize()
+                c.needsLayout = true
+                cur = c.superview
+            }
+            window?.toolbar?.validateVisibleItems()
+        }
+        @objc func triggerSearch() {
+            app?.searchFocus += 1
+        }
+    }
+}
+
 // MARK: Sidebar
 struct SidebarView: View {
     @EnvironmentObject var app: AppState
     var body: some View {
         List {
+            if !app.visiblePinnedFolders.isEmpty {
+                Section("置顶") {
+                    ForEach(app.visiblePinnedFolders) { p in
+                        pinnedRow(p)
+                    }
+                }
+            }
             Section("个人收藏") { ForEach(app.favorites, id: \.self) { row($0, name: $0.path.hasSuffix("CloudDocs") ? "iCloud 云盘" : nil) } }
             Section {
                 if app.bookmarks.isEmpty { Text("点 + 收藏当前文件夹").font(.caption).foregroundStyle(.secondary) }
                 ForEach(app.bookmarks, id: \.self) { u in
-                    row(u).contextMenu { Button("移除书签") { app.removeBookmark(u) } }
+                    row(u).contextMenu {
+                        Button(app.isPinned(u) ? "取消置顶" : "置顶到侧边栏") { app.togglePin(u) }
+                        Button("移除书签") { app.removeBookmark(u) }
+                    }
                 }
             } header: {
                 HStack { Text("书签"); Spacer()
                     Button { app.addBookmark() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("把当前文件夹加入书签")
+                }
+            }
+            if !app.layouts.isEmpty {
+                Section {
+                    ForEach(app.layouts) { l in
+                        Button { app.applyLayout(l) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: l.dual ? "rectangle.split.2x1" : "rectangle").foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(l.name).lineLimit(1)
+                                    Text(l.summary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }.padding(.leading, 3).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        .help(l.summary)
+                        .contextMenu {
+                            Button("打开此布局") { app.applyLayout(l) }
+                            Button("用当前窗口状态更新") { app.updateLayout(l) }
+                            Button("重新命名…") { if let n = promptText(title: "重新命名布局", message: "", initial: l.name), !n.isEmpty { app.renameLayout(l, to: n) } }
+                            Divider()
+                            Button("删除布局") { app.removeLayout(l) }
+                        }
+                    }
+                } header: {
+                    HStack { Text("布局"); Spacer()
+                        Button { app.promptSaveLayout() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("把当前两栏与标签页保存为布局")
+                    }
                 }
             }
             Section("最近访问") {
@@ -287,6 +406,37 @@ struct SidebarView: View {
                 }
             }
         }.listStyle(.sidebar)
+    }
+    func pinnedRow(_ p: PinnedFolder) -> some View {
+        let u = p.url
+        let isCur = app.activeTab.path.path == u.standardizedFileURL.path
+        let idx = app.pinnedFolders.firstIndex(where: { $0.id == p.id }) ?? 0
+        return Button { app.go(u) } label: {
+            HStack(spacing: 8) {
+                Image(nsImage: safeFolderIcon(u)).resizable().frame(width: 16, height: 16)
+                Text(p.displayName).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).fontWeight(isCur ? .semibold : .regular)
+        .foregroundStyle(isCur ? AnyShapeStyle(accentA) : AnyShapeStyle(.primary)).help(u.path)
+        .onDrop(of: [.fileURL], delegate: FinderDrop(app: app, dir: u))
+        .contextMenu {
+            Button("打开") { app.go(u) }
+            Button("在新标签页中打开") { app.openInNewTab(u) }
+            Button("在另一栏中打开") { app.openInOtherPane(u) }
+            Divider()
+            Button("重新命名显示名…") {
+                if let n = promptText(title: "置顶文件夹显示名", message: "留空则恢复文件夹原名。", initial: p.displayName) {
+                    app.renamePinnedFolder(p, to: n)
+                }
+            }
+            Button("上移") { app.movePinnedFolder(p, by: -1) }.disabled(idx == 0)
+            Button("下移") { app.movePinnedFolder(p, by: 1) }.disabled(idx >= app.pinnedFolders.count - 1)
+            Divider()
+            Button("取消置顶") { app.unpinFolder(u) }
+        }
     }
     func row(_ u: URL, name: String? = nil) -> some View {
         let isCur = app.activeTab.path.path == u.standardizedFileURL.path
